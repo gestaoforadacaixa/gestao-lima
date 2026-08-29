@@ -59,7 +59,7 @@ const uid = () => (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)
 let CATEGORIAS = ["Outros"];
 const CAT_CORES = { "Outros": "#8792A8" };
 
-const MEIOS = ["Crédito","Débito","Dinheiro","Pix","Transferência"];
+const MEIOS = ["Crédito","Débito","Dinheiro","Pix","Transferência","Pluxe"];
 const MESES_NOMES_FULL = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 const MES_INICIO = "2026-09";
 const FECHADOS = [];
@@ -84,7 +84,7 @@ const hoje    = () => new Date().toISOString().slice(0,10);
 const d2brl   = d => { const n=parseInt(d||"0",10); return `${Math.floor(n/100).toLocaleString("pt-BR")},${String(n%100).padStart(2,"0")}`; };
 const d2float = d => parseInt(d||"0",10)/100;
 const float2d = v => String(Math.round(v*100));
-const soma    = arr => arr.filter(t=>!t.excluido && t.categoria!=="Liquidação de Fatura" && t.categoria!=="Liquidacao de Fatura").reduce((s,t)=>s+t.valor,0);
+const soma    = arr => arr.filter(t=>!t.excluido && t.meio!=="Pluxe").reduce((s,t)=>s+t.valor,0);
 const padN    = n => String(n).padStart(2,"0");
 const semanasDoMes = mesKey => {
   const [ano,mes] = mesKey.split("-").map(Number);
@@ -140,9 +140,26 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#2E6E5E!import
 function Logo({size=48}) {
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
-      <circle cx="50" cy="50" r="50" fill="#173C33"/>
-      <circle cx="50" cy="50" r="46" fill="none" stroke="#C9A566" strokeWidth="1.5"/>
-      <text x="50" y="60" textAnchor="middle" fontFamily="Fraunces,serif" fontSize="32" fontWeight="600" fill="#C9A566">LP</text>
+      <defs>
+        <linearGradient id="limaGold" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stopColor="#F2DFA8"/>
+          <stop offset="45%" stopColor="#D4AF6A"/>
+          <stop offset="100%" stopColor="#A9803A"/>
+        </linearGradient>
+        <linearGradient id="limaNavy" x1="20%" y1="0%" x2="80%" y2="100%">
+          <stop offset="0%" stopColor="#0A1628"/>
+          <stop offset="55%" stopColor="#0D2036"/>
+          <stop offset="100%" stopColor="#0F3A4A"/>
+        </linearGradient>
+      </defs>
+      <circle cx="50" cy="50" r="50" fill="url(#limaNavy)"/>
+      <path d="M50 17.5 L75 50 L50 82.5 L25 50 Z" fill="none" stroke="url(#limaGold)" strokeWidth="1.3"/>
+      <path d="M50 25 L68 50 L50 75 L32 50 Z" fill="none" stroke="url(#limaGold)" strokeWidth="0.6"/>
+      <line x1="36" y1="50" x2="64" y2="50" stroke="url(#limaGold)" strokeWidth="1"/>
+      <circle cx="36" cy="50" r="1.6" fill="url(#limaGold)"/>
+      <circle cx="64" cy="50" r="1.6" fill="url(#limaGold)"/>
+      <text x="50" y="46" textAnchor="middle" fontFamily="Georgia,serif" fontSize="13.5" fontWeight="700" fill="url(#limaGold)">L</text>
+      <text x="50" y="61.5" textAnchor="middle" fontFamily="Georgia,serif" fontSize="13.5" fontWeight="700" fill="url(#limaGold)">P</text>
     </svg>
   );
 }
@@ -239,6 +256,11 @@ function FormBody({form,setForm,erro,setErro}) {
           {MEIOS.map(m=><option key={m} value={m}>{m}</option>)}
         </select>
         <Err k="meio"/>
+        {form.meio==="Pluxe"&&(
+          <div style={{background:"#FBF3E4",border:"1px solid #EAD9AE",borderRadius:10,padding:"10px 12px",marginTop:8,fontSize:11.5,color:"#8A6A1F",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
+            ℹ️ Pluxe é só controle — esse valor não soma no total de despesas nem no Caixa.
+          </div>
+        )}
       </div>
       <div style={{marginBottom:16}}>
         <label style={FL}>Data *</label>
@@ -351,14 +373,14 @@ export default function App() {
   }, []);
 
   const ativos     = useMemo(()=>items.filter(t=>!t.excluido),[items]);
-  const contaveis  = useMemo(()=>ativos.filter(t=>t.categoria!=="Liquidação de Fatura" && t.categoria!=="Liquidacao de Fatura"),[ativos]);
+  const contaveis  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe"),[ativos]);
   const total      = useMemo(()=>contaveis.reduce((s,t)=>s+t.valor,0),[contaveis]);
   const totalReceita = useMemo(()=>receitas.reduce((s,r)=>s+r.valor,0),[receitas]);
   const saldo        = totalReceita - total;
   const maxDia     = useMemo(()=>{const d=items.map(t=>parseInt(t.data.slice(8,10)));return d.length?Math.max(...d):31;},[items]);
   const totalAnt   = useMemo(()=>soma(itemsAnt.filter(t=>parseInt(t.data.slice(8,10))<=maxDia)),[itemsAnt,maxDia]);
   const sorted     = useMemo(()=>[...items].sort((a,b)=>new Date(b.data)-new Date(a.data)),[items]);
-  const sortedReceitas = useMemo(()=>[...receitas].sort((a,b)=>new Date(b.data)-new Date(a.data)),[receitas]);
+  const sortedReceitas = useMemo(()=>[...receitas].sort((a,b)=>new Date(b.semana)-new Date(a.semana)),[receitas]);
   const byCat      = useMemo(()=>{
     const m={};
     contaveis.forEach(t=>{m[t.categoria]=(m[t.categoria]||0)+t.valor;});
@@ -368,7 +390,7 @@ export default function App() {
     const semanas = semanasDoMes(mesAtual.mes);
     return semanas.map(sem=>{
       const rec = receitas.filter(r=>{
-        const d=parseInt(r.data.slice(8,10));
+        const d=parseInt(r.semana.slice(8,10));
         return d>=sem.ini && d<=sem.fim;
       }).reduce((s,r)=>s+r.valor,0);
       const desp = contaveis.filter(t=>{
@@ -463,6 +485,7 @@ export default function App() {
           <div style={{fontSize:14,color:t.excluido?"#aaa":"#173C33",fontWeight:700,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",textDecoration:t.excluido?"line-through":"none"}}>{t.descricao}</div>
           <div style={{display:"flex",gap:6,alignItems:"center",marginTop:2,flexWrap:"wrap"}}>
             <span style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif"}}>{fmtDate(t.data)} · {t.categoria} · {t.meio}</span>
+            {t.meio==="Pluxe"&&!t.excluido&&<span className="badge" style={{background:"#FBF3E4",color:"#8A6A1F",border:"1px solid #EAD9AE"}}>Pluxe · não conta</span>}
           </div>
           {t.obs&&!t.excluido&&<div style={{fontSize:11,color:"#A39C8A",marginTop:1,fontStyle:"italic",fontFamily:"'Inter',sans-serif"}}>{t.obs}</div>}
           {t.excluido&&<span className="badge" style={{background:"#FBECEA",color:"#B4483C",border:"1px solid #EBBDB6"}}>Valor excluído da soma de valores</span>}
@@ -487,7 +510,7 @@ export default function App() {
         <div style={{width:4,height:40,background:"#2E6E5E",borderRadius:3,flexShrink:0}}/>
         <div style={{minWidth:0}}>
           <div style={{fontSize:14,color:"#173C33",fontWeight:700,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.descricao}</div>
-          <div style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif",marginTop:2}}>{fmtDate(r.data)}</div>
+          <div style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif",marginTop:2}}>{fmtDate(r.semana)}</div>
           {r.obs&&<div style={{fontSize:11,color:"#A39C8A",marginTop:1,fontStyle:"italic",fontFamily:"'Inter',sans-serif"}}>{r.obs}</div>}
         </div>
       </div>
@@ -759,7 +782,7 @@ export default function App() {
             <div className="handle"/>
             <div style={{fontSize:18,fontWeight:800,color:"#B4483C",marginBottom:6,fontFamily:"'Fraunces',serif"}}>Excluir Receita</div>
             <div style={{fontSize:14,color:"#173C33",marginBottom:2,fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{delReceita.descricao}</div>
-            <div style={{fontSize:13,color:"#A39C8A",marginBottom:20,fontFamily:"'Inter',sans-serif"}}>{fmt(delReceita.valor)} · {fmtDate(delReceita.data)}</div>
+            <div style={{fontSize:13,color:"#A39C8A",marginBottom:20,fontFamily:"'Inter',sans-serif"}}>{fmt(delReceita.valor)} · {fmtDate(delReceita.semana)}</div>
             <div style={{background:"#FBECEA",border:"1px solid #EBBDB633",borderRadius:10,padding:"12px 14px",marginBottom:20,fontSize:13,color:"#B4483C",fontWeight:700,fontFamily:"'Inter',sans-serif"}}>
               Este recebimento será removido do fluxo de caixa.
             </div>
