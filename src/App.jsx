@@ -321,7 +321,7 @@ export default function App() {
   const [loading,setLoading]               = useState(true);
   const [lastSync,setLastSync]             = useState(null);
   const [,forceCatUpdate]                  = useState(0);
-  const [view,setView]                     = useState("inicio");
+  const [view,setView]                     = useState("caixa");
   const [showPicker,setShowPicker]         = useState(false);
   const [showForm,setShowForm]             = useState(false);
   const [showFormReceita,setShowFormReceita]=useState(false);
@@ -566,7 +566,7 @@ export default function App() {
           </div>
         </div>
         <nav style={{display:"flex",marginTop:2}}>
-          {[["inicio","Início"],["caixa","Caixa"],["categorias","Categorias"],["historico","Histórico"]].map(([v,l])=>(
+          {[["caixa","Caixa"],["inicio","Despesa"],["categorias","Categorias"],["historico","Histórico"]].map(([v,l])=>(
             <button key={v} className="tab" onClick={()=>setView(v)}
               style={{flex:1,background:"none",border:"none",borderBottom:view===v?"2.5px solid #2E6E5E":"2.5px solid transparent",color:view===v?"#2E6E5E":"#A39C8A",padding:"10px 4px",fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase",cursor:"pointer",fontFamily:"'Inter',sans-serif",fontWeight:800,transition:"all .2s"}}>
               {l}
