@@ -52,6 +52,12 @@ async function fetchCategorias() {
     return r.ok ? r.json() : [];
   } catch { return []; }
 }
+async function fetchAplicadoAll() {
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/lancamentos?cliente_id=eq.${CID}&categoria=eq.Aplicado&excluido=eq.false&order=data.desc`, { headers: H });
+    return r.ok ? r.json() : [];
+  } catch { return []; }
+}
 const uid = () => (crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now());
 
 // Fallback mínimo — só usado se a busca de categorias falhar ou vier vazia
@@ -84,7 +90,7 @@ const hoje    = () => new Date().toISOString().slice(0,10);
 const d2brl   = d => { const n=parseInt(d||"0",10); return `${Math.floor(n/100).toLocaleString("pt-BR")},${String(n%100).padStart(2,"0")}`; };
 const d2float = d => parseInt(d||"0",10)/100;
 const float2d = v => String(Math.round(v*100));
-const soma    = arr => arr.filter(t=>!t.excluido && t.meio!=="Pluxe").reduce((s,t)=>s+t.valor,0);
+const soma    = arr => arr.filter(t=>!t.excluido && t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data<=hoje()).reduce((s,t)=>s+t.valor,0);
 const padN    = n => String(n).padStart(2,"0");
 const semanasDoMes = mesKey => {
   const [ano,mes] = mesKey.split("-").map(Number);
@@ -170,13 +176,14 @@ function Bar({percent,color="#2E6E5E"}) {
     </div>
   );
 }
-function Comparativo({atual,anterior,isParcial}) {
+function Comparativo({atual,anterior,isParcial,inverterCores}) {
   if(!anterior) return null;
   const diff=((atual-anterior)/anterior)*100;
   const baixo=diff<0;
-  const cor=baixo?"#2E6E5E":"#B4483C";
+  const bom = inverterCores ? !baixo : baixo;
+  const cor=bom?"#2E6E5E":"#B4483C";
   return (
-    <div style={{display:"inline-flex",alignItems:"center",gap:6,background:baixo?"#EAF3EF":"#FBECEA",border:`1px solid ${cor}30`,borderRadius:8,padding:"4px 10px",marginTop:8}}>
+    <div style={{display:"inline-flex",alignItems:"center",gap:6,background:bom?"#EAF3EF":"#FBECEA",border:`1px solid ${cor}30`,borderRadius:8,padding:"4px 10px",marginTop:8}}>
       <span style={{fontSize:14,color:cor,fontWeight:800,fontFamily:"'Inter',sans-serif"}}>{baixo?"▼":"▲"} {Math.abs(diff).toFixed(1)}%</span>
       <span style={{fontSize:10,color:"#7A7466",letterSpacing:"0.06em",textTransform:"uppercase",fontWeight:700}}>{isParcial?"vs mesmo período ant.":"vs mês anterior"}</span>
     </div>
@@ -247,6 +254,11 @@ function FormBody({form,setForm,erro,setErro}) {
         </select>
         <Err k="categoria"/>
         {CATEGORIAS.length<=1 && <div style={{fontSize:11,color:"#A6822E",marginTop:6,fontFamily:"'Inter',sans-serif"}}>Nenhuma categoria cadastrada ainda — peça pro seu mentor cadastrar pelo Painel.</div>}
+        {form.categoria==="Aplicado"&&(
+          <div style={{background:"#EAF3EF",border:"1px solid #BFDCD1",borderRadius:10,padding:"10px 12px",marginTop:8,fontSize:11.5,color:"#235448",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
+            ℹ️ Aplicado é só controle — esse valor não soma no total de despesas nem no Caixa.
+          </div>
+        )}
       </div>
       <div style={{marginBottom:16}}>
         <label style={FL}>Meio de Pagamento *</label>
@@ -267,6 +279,11 @@ function FormBody({form,setForm,erro,setErro}) {
         <input type="date" style={INP(erro.data)} value={form.data}
           onChange={e=>{setForm(f=>({...f,data:e.target.value}));setErro(r=>({...r,data:null}));}}/>
         <Err k="data"/>
+        {form.data>hoje()&&(
+          <div style={{background:"#FBECEA",border:"1px solid #EBBDB6",borderRadius:10,padding:"10px 12px",marginTop:8,fontSize:11.5,color:"#8A3A30",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
+            📅 Data futura — essa despesa fica "agendada" e só entra no total a partir de {fmtDate(form.data)}.
+          </div>
+        )}
       </div>
       <div style={{marginBottom:8}}>
         <label style={FL}>Observação</label>
@@ -321,6 +338,7 @@ export default function App() {
   const [loading,setLoading]               = useState(true);
   const [lastSync,setLastSync]             = useState(null);
   const [,forceCatUpdate]                  = useState(0);
+  const [aplicadoTodos,setAplicadoTodos]   = useState([]);
   const [view,setView]                     = useState("caixa");
   const [showPicker,setShowPicker]         = useState(false);
   const [showForm,setShowForm]             = useState(false);
@@ -344,13 +362,15 @@ export default function App() {
 
   const load = useCallback(async (silent=false) => {
     if (!silent) setLoading(true);
-    const [dAtual, dAnt, rAtual] = await Promise.all([
+    const [dAtual, dAnt, rAtual, aplicAll] = await Promise.all([
       sbGet(mesAtual.mes),
       mesAnt ? sbGet(mesAnt.mes) : Promise.resolve([]),
       rcGet(mesAtual.mes),
+      fetchAplicadoAll(),
     ]);
     setAllItems(p => ({...p, [mesAtual.mes]: dAtual||[], ...(mesAnt ? {[mesAnt.mes]: dAnt||[]} : {})}));
     setAllReceitas(p => ({...p, [mesAtual.mes]: rAtual||[]}));
+    setAplicadoTodos(aplicAll||[]);
     setLastSync(new Date());
     if (!silent) setLoading(false);
   }, [mesAtual.mes, mesAnt]);
@@ -373,7 +393,7 @@ export default function App() {
   }, []);
 
   const ativos     = useMemo(()=>items.filter(t=>!t.excluido),[items]);
-  const contaveis  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe"),[ativos]);
+  const contaveis  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data<=hoje()),[ativos]);
   const total      = useMemo(()=>contaveis.reduce((s,t)=>s+t.valor,0),[contaveis]);
   const totalReceita = useMemo(()=>receitas.reduce((s,r)=>s+r.valor,0),[receitas]);
   const saldo        = totalReceita - total;
@@ -381,6 +401,8 @@ export default function App() {
   const totalAnt   = useMemo(()=>soma(itemsAnt.filter(t=>parseInt(t.data.slice(8,10))<=maxDia)),[itemsAnt,maxDia]);
   const sorted     = useMemo(()=>[...items].sort((a,b)=>new Date(b.data)-new Date(a.data)),[items]);
   const sortedReceitas = useMemo(()=>[...receitas].sort((a,b)=>new Date(b.semana)-new Date(a.semana)),[receitas]);
+  const totalAplicadoGeral = useMemo(()=>aplicadoTodos.reduce((s,t)=>s+t.valor,0),[aplicadoTodos]);
+  const aplicadoOrd = useMemo(()=>[...aplicadoTodos].sort((a,b)=>new Date(b.data)-new Date(a.data)),[aplicadoTodos]);
   const byCat      = useMemo(()=>{
     const m={};
     contaveis.forEach(t=>{m[t.categoria]=(m[t.categoria]||0)+t.valor;});
@@ -486,6 +508,8 @@ export default function App() {
           <div style={{display:"flex",gap:6,alignItems:"center",marginTop:2,flexWrap:"wrap"}}>
             <span style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif"}}>{fmtDate(t.data)} · {t.categoria} · {t.meio}</span>
             {t.meio==="Pluxe"&&!t.excluido&&<span className="badge" style={{background:"#FBF3E4",color:"#8A6A1F",border:"1px solid #EAD9AE"}}>Pluxe · não conta</span>}
+            {t.categoria==="Aplicado"&&!t.excluido&&<span className="badge" style={{background:"#EAF3EF",color:"#235448",border:"1px solid #BFDCD1"}}>Aplicado · não conta</span>}
+            {t.data>hoje()&&!t.excluido&&<span className="badge" style={{background:"#FBECEA",color:"#8A3A30",border:"1px solid #EBBDB6"}}>Agendado · {fmtDate(t.data)}</span>}
           </div>
           {t.obs&&!t.excluido&&<div style={{fontSize:11,color:"#A39C8A",marginTop:1,fontStyle:"italic",fontFamily:"'Inter',sans-serif"}}>{t.obs}</div>}
           {t.excluido&&<span className="badge" style={{background:"#FBECEA",color:"#B4483C",border:"1px solid #EBBDB6"}}>Valor excluído da soma de valores</span>}
@@ -566,9 +590,9 @@ export default function App() {
           </div>
         </div>
         <nav style={{display:"flex",marginTop:2}}>
-          {[["caixa","Caixa"],["inicio","Despesa"],["categorias","Categorias"],["historico","Histórico"]].map(([v,l])=>(
+          {[["caixa","Caixa"],["inicio","Despesa"],["aplicado","Aplicado"],["categorias","Categorias"],["historico","Histórico"]].map(([v,l])=>(
             <button key={v} className="tab" onClick={()=>setView(v)}
-              style={{flex:1,background:"none",border:"none",borderBottom:view===v?"2.5px solid #2E6E5E":"2.5px solid transparent",color:view===v?"#2E6E5E":"#A39C8A",padding:"10px 4px",fontSize:12,letterSpacing:"0.1em",textTransform:"uppercase",cursor:"pointer",fontFamily:"'Inter',sans-serif",fontWeight:800,transition:"all .2s"}}>
+              style={{flex:1,background:"none",border:"none",borderBottom:view===v?"2.5px solid #2E6E5E":"2.5px solid transparent",color:view===v?"#2E6E5E":"#A39C8A",padding:"10px 2px",fontSize:10.5,letterSpacing:"0.04em",textTransform:"uppercase",cursor:"pointer",fontFamily:"'Inter',sans-serif",fontWeight:800,transition:"all .2s"}}>
               {l}
             </button>
           ))}
@@ -665,6 +689,34 @@ export default function App() {
                   {!isFechado&&<div style={{color:"#A39C8A",fontSize:12,marginTop:4,fontFamily:"'Inter',sans-serif"}}>Toque em "Nova Receita" abaixo</div>}
                 </div>
                 :sortedReceitas.map((r,i)=><ReceitaRow key={r.id} r={r} last={i===sortedReceitas.length-1}/>)
+              }
+            </div>
+          </>
+        )}
+        {view==="aplicado"&&(
+          <>
+            <div style={{background:"linear-gradient(135deg,#173C33,#2E6E5E)",borderRadius:16,padding:"26px 22px",marginBottom:14,boxShadow:"0 4px 20px #173C3325"}}>
+              <div style={{fontSize:11,letterSpacing:"0.15em",color:"#C9A566",textTransform:"uppercase",marginBottom:6,fontWeight:700}}>Montante Aplicado (acumulado)</div>
+              <div style={{fontSize:36,fontWeight:800,color:"#F4F2ED",lineHeight:1,fontFamily:"'Fraunces',serif"}}>{fmt(totalAplicadoGeral)}</div>
+              <div style={{fontSize:11,color:"#C9A566",marginTop:8,fontWeight:600}}>{aplicadoTodos.length} lançamento{aplicadoTodos.length===1?"":"s"} · soma de todos os meses</div>
+            </div>
+            <div style={{fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Extrato de Aplicações</div>
+            <div style={card}>
+              {aplicadoOrd.length===0
+                ?<div style={{padding:"24px 0",textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>🌱</div><div style={{color:"#A39C8A",fontSize:14,fontFamily:"'Inter',sans-serif",fontWeight:700}}>Nenhuma aplicação registrada ainda.</div><div style={{color:"#A39C8A",fontSize:12,marginTop:4,fontFamily:"'Inter',sans-serif"}}>Lance uma despesa com categoria "Aplicado" pra começar a somar aqui.</div></div>
+                :aplicadoOrd.map((t,i)=>(
+                  <div key={t.id} style={rowDiv(i===aplicadoOrd.length-1)}>
+                    <div style={{display:"flex",gap:10,alignItems:"center",flex:1,minWidth:0}}>
+                      <div style={{width:4,height:40,background:"#2E6E5E",borderRadius:3,flexShrink:0}}/>
+                      <div style={{minWidth:0}}>
+                        <div style={{fontSize:14,color:"#173C33",fontWeight:700,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.descricao}</div>
+                        <div style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif",marginTop:2}}>{fmtDate(t.data)} · {MESES_NOMES_FULL[parseInt(t.mes.slice(5,7),10)-1]} {t.mes.slice(0,4)}</div>
+                        {t.obs&&<div style={{fontSize:11,color:"#A39C8A",marginTop:1,fontStyle:"italic",fontFamily:"'Inter',sans-serif"}}>{t.obs}</div>}
+                      </div>
+                    </div>
+                    <div style={{fontSize:15,fontWeight:800,color:"#2E6E5E",fontFamily:"'Inter',sans-serif",flexShrink:0}}>{fmt(t.valor)}</div>
+                  </div>
+                ))
               }
             </div>
           </>
