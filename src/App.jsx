@@ -67,7 +67,7 @@ const CAT_CORES = { "Outros": "#8792A8" };
 
 const MEIOS = ["Crédito","Débito","Dinheiro","Pix","Transferência","Pluxe"];
 const MESES_NOMES_FULL = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
-const MES_INICIO = "2026-09";
+const MES_INICIO = "2026-08";
 const FECHADOS = [];
 function gerarMeses(){
   const [ay,am] = MES_INICIO.split("-").map(Number);
@@ -92,6 +92,14 @@ const d2float = d => parseInt(d||"0",10)/100;
 const float2d = v => String(Math.round(v*100));
 const soma    = arr => arr.filter(t=>!t.excluido && t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data<=hoje()).reduce((s,t)=>s+t.valor,0);
 const padN    = n => String(n).padStart(2,"0");
+const addMesesData = (dataStr, n) => {
+  const [y,m,d] = dataStr.split("-").map(Number);
+  const tot = (m-1)+n;
+  const ny = y + Math.floor(tot/12);
+  const nm = (tot%12)+1;
+  const ult = new Date(ny, nm, 0).getDate();
+  return `${ny}-${padN(nm)}-${padN(Math.min(d,ult))}`;
+};
 const semanasDoMes = mesKey => {
   const [ano,mes] = mesKey.split("-").map(Number);
   const ultDia = new Date(ano, mes, 0).getDate();
@@ -221,11 +229,11 @@ function MonthPicker({mesAtual,onSelect,onClose}) {
     </>
   );
 }
-const emptyForm=()=>({descricao:"",valorDigits:"",categoria:"",meio:"",data:hoje(),obs:""});
+const emptyForm=()=>({descricao:"",valorDigits:"",categoria:"",meio:"",data:hoje(),obs:"",recorrente:false,repeticoes:""});
 const emptyFormReceita=()=>({descricao:"",valorDigits:"",data:hoje(),obs:""});
 const INP=err=>({background:"#FAF9F6",border:`2px solid ${err?"#B4483C":"#E3DFD3"}`,borderRadius:10,color:"#173C33",padding:"13px 14px",fontSize:15,fontFamily:"'Inter',sans-serif",width:"100%",transition:"border .2s"});
 const FL={fontSize:11,color:"#7A7466",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:7,display:"block",fontWeight:700,fontFamily:"'Inter',sans-serif"};
-function FormBody({form,setForm,erro,setErro}) {
+function FormBody({form,setForm,erro,setErro,permiteRecorrencia}) {
   const Err=({k})=>erro[k]?<div style={{fontSize:11,color:"#B4483C",marginTop:4,fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{erro[k]}</div>:null;
   return (
     <>
@@ -290,6 +298,34 @@ function FormBody({form,setForm,erro,setErro}) {
         <textarea style={{...INP(false),minHeight:72,resize:"none",fontSize:14}} placeholder="Detalhes, referência, etc."
           value={form.obs} onChange={e=>setForm(f=>({...f,obs:e.target.value}))}/>
       </div>
+      {permiteRecorrencia&&(
+        <>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 0",borderTop:"2px solid #F0EEE6",marginTop:8}}>
+            <div>
+              <div style={{fontSize:14,fontWeight:700,color:"#173C33",fontFamily:"'Inter',sans-serif"}}>Despesa Recorrente</div>
+              <div style={{fontSize:11,color:"#A39C8A",marginTop:2,fontFamily:"'Inter',sans-serif"}}>Repete automaticamente nos próximos meses</div>
+            </div>
+            <div style={{width:44,height:24,borderRadius:12,cursor:"pointer",background:form.recorrente?"#2E6E5E":"#ddd",display:"flex",alignItems:"center",padding:2,transition:"background .2s",flexShrink:0}}
+              onClick={()=>{setForm(f=>({...f,recorrente:!f.recorrente}));setErro(r=>({...r,repeticoes:null}));}}>
+              <div style={{width:20,height:20,borderRadius:"50%",background:"#fff",boxShadow:"0 1px 4px #0003",transition:"transform .2s",transform:form.recorrente?"translateX(20px)":"translateX(0)"}}/>
+            </div>
+          </div>
+          {form.recorrente&&(
+            <div style={{background:"#EAF3EF",border:"1.5px solid #BFDCD1",borderRadius:12,padding:16,marginTop:4}}>
+              <label style={FL}>Repetir por quantos meses? *</label>
+              <input type="number" inputMode="numeric" min="1" max="60" style={{...INP(erro.repeticoes),width:"50%"}} placeholder="Ex: 6"
+                value={form.repeticoes}
+                onChange={e=>{setForm(f=>({...f,repeticoes:e.target.value.replace(/\D/g,"").slice(0,2)}));setErro(r=>({...r,repeticoes:null}));}}/>
+              <Err k="repeticoes"/>
+              {parseInt(form.repeticoes)>=1&&form.data&&(
+                <div style={{fontSize:11.5,color:"#235448",fontWeight:600,marginTop:10,fontFamily:"'Inter',sans-serif"}}>
+                  🔁 Além deste, será lançado nos próximos {parseInt(form.repeticoes)} mês{parseInt(form.repeticoes)>1?"es":""} — último em {addMesesData(form.data,parseInt(form.repeticoes)).slice(5,7)}/{addMesesData(form.data,parseInt(form.repeticoes)).slice(0,4)}, sempre no dia {form.data.slice(8,10)} (ou no último dia do mês, se for menor).
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </>
   );
 }
@@ -395,6 +431,9 @@ export default function App() {
   const ativos     = useMemo(()=>items.filter(t=>!t.excluido),[items]);
   const contaveis  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data<=hoje()),[ativos]);
   const total      = useMemo(()=>contaveis.reduce((s,t)=>s+t.valor,0),[contaveis]);
+  const agendados  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data>hoje()),[ativos]);
+  const totalAgendado = useMemo(()=>agendados.reduce((s,t)=>s+t.valor,0),[agendados]);
+  const totalProgramado = total + totalAgendado;
   const totalReceita = useMemo(()=>receitas.reduce((s,r)=>s+r.valor,0),[receitas]);
   const saldo        = totalReceita - total;
   const maxDia     = useMemo(()=>{const d=items.map(t=>parseInt(t.data.slice(8,10)));return d.length?Math.max(...d):31;},[items]);
@@ -433,6 +472,10 @@ export default function App() {
     if(!f.categoria)                                   e.categoria    ="Selecione uma categoria";
     if(!f.meio)                                        e.meio         ="Selecione o meio de pagamento";
     if(!f.data)                                        e.data         ="Campo obrigatório";
+    if(f.recorrente){
+      const n=parseInt(f.repeticoes,10);
+      if(!n||n<1||n>60)                                e.repeticoes   ="Informe de 1 a 60 meses";
+    }
     return e;
   };
   const validarReceita=f=>{
@@ -450,11 +493,24 @@ export default function App() {
       id: uid(), cliente_id: CID, mes: form.data.slice(0,7), centro: "empresa",
       categoria: form.categoria, descricao: form.descricao.trim(), valor,
       meio: form.meio, data: form.data, obs: form.obs, excluido: false,
-      recorrente: false, motivo_exclusao: "",
+      recorrente: !!form.recorrente, motivo_exclusao: "",
     };
     const res = await sbPost(item);
     setShowForm(false);
-    if(res){ load(); showToast("✓ Lançamento registrado"); }
+    if(!res) return;
+    let extras = 0;
+    if(form.recorrente){
+      const n = parseInt(form.repeticoes,10);
+      const novas = [];
+      for(let i=1;i<=n;i++){
+        const dt = addMesesData(form.data, i);
+        novas.push({...item, id: uid(), mes: dt.slice(0,7), data: dt});
+      }
+      const resultados = await Promise.all(novas.map(x=>sbPost(x)));
+      extras = resultados.filter(Boolean).length;
+    }
+    load();
+    showToast(form.recorrente ? `✓ Registrado + ${extras} recorrência${extras===1?"":"s"}` : "✓ Lançamento registrado");
   };
   const lancarReceita=async ()=>{
     const e=validarReceita(formReceita);
@@ -603,12 +659,23 @@ export default function App() {
         {view==="inicio"&&(
           <>
             <div style={{background:"#fff",borderRadius:16,padding:"24px 20px",marginBottom:14,boxShadow:"0 2px 12px #173C3310"}}>
-              <div style={{fontSize:11,letterSpacing:"0.15em",color:"#A39C8A",textTransform:"uppercase",marginBottom:4,fontWeight:700}}>Total lançado — {mesAtual.label}</div>
-              <div style={{display:"flex",alignItems:"flex-end",gap:12,flexWrap:"wrap"}}>
-                <div style={{fontSize:40,fontWeight:800,color:"#173C33",lineHeight:1,fontFamily:"'Fraunces',serif"}}>{fmt(total)}</div>
-                {mesAnt&&totalAnt>0&&<Comparativo atual={total} anterior={totalAnt} isParcial={!isFechado}/>}
+              <div style={{display:"grid",gridTemplateColumns:"7fr 3fr",gap:14,alignItems:"start"}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:11,letterSpacing:"0.15em",color:"#A39C8A",textTransform:"uppercase",marginBottom:4,fontWeight:700}}>Total lançado — {mesAtual.label}</div>
+                  <div style={{display:"flex",alignItems:"flex-end",gap:12,flexWrap:"wrap"}}>
+                    <div style={{fontSize:fmt(total).length<=11?40:fmt(total).length<=13?34:28,fontWeight:800,color:"#173C33",lineHeight:1,fontFamily:"'Fraunces',serif"}}>{fmt(total)}</div>
+                    {mesAnt&&totalAnt>0&&<Comparativo atual={total} anterior={totalAnt} isParcial={!isFechado}/>}
+                  </div>
+                  <div style={{fontSize:12,color:"#A39C8A",marginTop:8,letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:600}}>{contaveis.length} lançamentos ativos</div>
+                </div>
+                <div style={{minWidth:0,borderLeft:"1px solid #F0EEE6",paddingLeft:12}}>
+                  <div style={{fontSize:9,letterSpacing:"0.1em",color:"#A39C8A",textTransform:"uppercase",marginBottom:6,fontWeight:700,lineHeight:1.3}}>Gastos programados</div>
+                  <div style={{fontSize:fmt(totalProgramado).length<=11?16:13,fontWeight:800,color:"#8A6A1F",lineHeight:1.1,fontFamily:"'Fraunces',serif"}}>{fmt(totalProgramado)}</div>
+                  <div style={{fontSize:9.5,color:"#A39C8A",marginTop:6,fontWeight:600,lineHeight:1.35,fontFamily:"'Inter',sans-serif"}}>
+                    {agendados.length>0?`inclui ${fmt(totalAgendado)} a entrar (${agendados.length})`:"nada agendado"}
+                  </div>
+                </div>
               </div>
-              <div style={{fontSize:12,color:"#A39C8A",marginTop:8,letterSpacing:"0.08em",textTransform:"uppercase",fontWeight:600}}>{contaveis.length} lançamentos ativos</div>
             </div>
             <div style={{fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Despesas por Categoria</div>
             <div style={card}>
@@ -774,7 +841,7 @@ export default function App() {
           <div className="sheet">
             <div className="handle"/>
             <div style={{fontSize:20,fontWeight:800,color:"#173C33",marginBottom:20,fontFamily:"'Fraunces',serif"}}>Novo Lançamento</div>
-            <FormBody form={form} setForm={setForm} erro={erro} setErro={setErro}/>
+            <FormBody form={form} setForm={setForm} erro={erro} setErro={setErro} permiteRecorrencia/>
             <div style={{height:16}}/>
             <button className="btn-primary" onClick={lancar}>Registrar Lançamento</button>
             <button className="btn-ghost" onClick={()=>setShowForm(false)}>Cancelar</button>
