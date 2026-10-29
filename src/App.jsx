@@ -40,6 +40,12 @@ async function rcPost(body) {
     return r.ok ? r.json() : null;
   } catch { return null; }
 }
+async function rcPatch(id, body) {
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/receitas?id=eq.${id}`, { method: "PATCH", headers: { ...H, "Prefer": "return=minimal" }, body: JSON.stringify(body) });
+    return r.ok;
+  } catch { return false; }
+}
 async function rcDelete(id) {
   try {
     const r = await fetch(`${SUPA_URL}/rest/v1/receitas?id=eq.${id}`, { method: "DELETE", headers: H });
@@ -382,6 +388,9 @@ export default function App() {
   const [editItem,setEditItem]             = useState(null);
   const [delItem,setDelItem]               = useState(null);
   const [delReceita,setDelReceita]         = useState(null);
+  const [editReceita,setEditReceita]       = useState(null);
+  const [catAberta,setCatAberta]           = useState(null);
+  const [busca,setBusca]                   = useState("");
   const [motivoExc,setMotivoExc]           = useState("");
   const [motivoErr,setMotivoErr]           = useState(false);
   const [form,setForm]                     = useState(emptyForm());
@@ -413,10 +422,10 @@ export default function App() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    if (showForm || showFormReceita || editItem || delItem || delReceita) return;
+    if (showForm || showFormReceita || editItem || delItem || delReceita || editReceita) return;
     const t = setInterval(() => load(true), 5000);
     return () => clearInterval(t);
-  }, [load, showForm, showFormReceita, editItem, delItem, delReceita]);
+  }, [load, showForm, showFormReceita, editItem, delItem, delReceita, editReceita]);
 
   useEffect(() => {
     fetchCategorias().then(res => {
@@ -545,13 +554,28 @@ export default function App() {
     setDelItem(null);setMotivoExc("");setMotivoErr(false);
     if(ok){ load(); showToast("Lançamento excluído"); }
   };
+  const openEditReceita=r=>{
+    setFormReceita({descricao:r.descricao||"",valorDigits:float2d(r.valor),data:r.semana||"",obs:r.obs||""});
+    setErroReceita({});setEditReceita(r);
+  };
+  const salvarEdicaoReceita=async ()=>{
+    const e=validarReceita(formReceita);
+    if(Object.keys(e).length){setErroReceita(e);return;}
+    const ok = await rcPatch(editReceita.id, {
+      descricao: formReceita.descricao.trim(), valor: d2float(formReceita.valorDigits),
+      semana: formReceita.data, mes: formReceita.data.slice(0,7), obs: formReceita.obs,
+    });
+    setEditReceita(null);
+    if(ok){ load(); showToast("✓ Receita atualizada"); }
+  };
+  const normTxt=x=>String(x||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
   const confirmarExclusaoReceita=async ()=>{
     const ok = await rcDelete(delReceita.id);
     setDelReceita(null);
     if(ok){ load(); showToast("Receita excluída"); }
   };
 
-  const anyModal=showForm||showFormReceita||!!editItem||!!delItem||!!delReceita;
+  const anyModal=showForm||showFormReceita||!!editItem||!!delItem||!!delReceita||!!editReceita;
   const card={background:"#fff",borderRadius:14,padding:"4px 16px",boxShadow:"0 2px 8px #173C3310",marginBottom:12};
   const rowDiv=last=>({padding:"13px 0",borderBottom:last?"none":"1px solid #F0EEE6",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10});
 
@@ -596,6 +620,14 @@ export default function App() {
       </div>
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
         <div style={{fontSize:15,fontWeight:800,color:"#2E6E5E",fontFamily:"'Inter',sans-serif"}}>{fmt(r.valor)}</div>
+        {!isFechado&&(
+          <button className="icon-btn" onClick={()=>openEditReceita(r)} title="Editar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
+          </button>
+        )}
         {!isFechado&&(
           <button className="icon-btn icon-btn-danger" onClick={()=>setDelReceita(r)} title="Excluir">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -793,20 +825,31 @@ export default function App() {
             <div style={{fontSize:22,fontWeight:800,color:"#173C33",marginBottom:18,fontFamily:"'Fraunces',serif"}}>Por Categoria</div>
             {byCat.length===0
               ?<div style={{...card,padding:24,textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>📂</div><div style={{color:"#A39C8A",fontSize:14,fontFamily:"'Inter',sans-serif",fontWeight:700}}>Nenhum lançamento neste mês.</div></div>
-              :byCat.map(({cat,val})=>(
+              :byCat.map(({cat,val})=>{
+                const aberta=catAberta===cat;
+                const lancs=aberta?contaveis.filter(t=>t.categoria===cat).sort((a,b)=>new Date(b.data)-new Date(a.data)):[];
+                return (
                 <div key={cat} style={{...card,marginBottom:10}}>
-                  <div style={{padding:"12px 0"}}>
+                  <div style={{padding:"12px 0",cursor:"pointer"}} onClick={()=>setCatAberta(aberta?null:cat)}>
                     <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,alignItems:"center"}}>
                       <div style={{display:"flex",alignItems:"center",gap:8}}>
                         <div style={{width:10,height:10,borderRadius:"50%",background:CAT_CORES[cat]||"#999",flexShrink:0}}/>
                         <span style={{fontSize:14,color:"#173C33",fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{cat}</span>
+                        <span style={{fontSize:11,color:"#A39C8A",display:"inline-block",transform:aberta?"rotate(90deg)":"none",transition:"transform .15s"}}>▶</span>
                       </div>
                       <span style={{fontSize:14,fontWeight:800,color:"#173C33",fontFamily:"'Inter',sans-serif"}}>{fmt(val)}</span>
                     </div>
                     <Bar percent={total>0?(val/total)*100:0} color={CAT_CORES[cat]||"#999"}/>
                   </div>
+                  {aberta&&(
+                    <div style={{borderTop:"1px solid #F0EEE6"}}>
+                      <div style={{fontSize:11,color:"#A39C8A",padding:"8px 0 0",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>{lancs.length} lançamento{lancs.length===1?"":"s"}</div>
+                      {lancs.map((t,i)=><LancRow key={t.id} t={t} last={i===lancs.length-1}/>)}
+                    </div>
+                  )}
                 </div>
-              ))
+                );
+              })
             }
           </>
         )}
@@ -816,12 +859,26 @@ export default function App() {
               <div style={{fontSize:22,fontWeight:800,color:"#173C33",fontFamily:"'Fraunces',serif"}}>Histórico</div>
               <div style={{fontSize:11,color:"#A39C8A",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>{items.length} lançamentos</div>
             </div>
-            <div style={card}>
-              {sorted.length===0
-                ?<div style={{padding:"24px 0",textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>🗒️</div><div style={{color:"#A39C8A",fontSize:14,fontFamily:"'Inter',sans-serif",fontWeight:700}}>Nenhum lançamento neste mês.</div></div>
-                :sorted.map((t,i)=><LancRow key={t.id} t={t} last={i===sorted.length-1}/>)
-              }
+            <div style={{position:"relative",marginBottom:12}}>
+              <input type="text" placeholder="Pesquisar descrição (ex: nubank)" value={busca} onChange={e=>setBusca(e.target.value)}
+                style={{width:"100%",background:"#fff",border:"2px solid #E3DFD3",borderRadius:10,color:"#173C33",padding:"12px 38px 12px 14px",fontSize:14,fontFamily:"'Inter',sans-serif"}}/>
+              {busca&&<button onClick={()=>setBusca("")} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",fontSize:18,color:"#A39C8A",cursor:"pointer",padding:4}}>×</button>}
             </div>
+            {(()=>{
+              const termos=normTxt(busca).split(/\s+/).filter(Boolean);
+              const lista=termos.length?sorted.filter(t=>{const h=normTxt(t.descricao);return termos.every(x=>h.includes(x));}):sorted;
+              return (
+                <>
+                  {termos.length>0&&<div style={{fontSize:11,color:"#A39C8A",marginBottom:8,fontWeight:600,fontFamily:"'Inter',sans-serif"}}>{lista.length} resultado{lista.length===1?"":"s"} · Total {fmt(lista.filter(t=>!t.excluido).reduce((a,t)=>a+t.valor,0))}</div>}
+                  <div style={card}>
+                    {lista.length===0
+                      ?<div style={{padding:"24px 0",textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>🗒️</div><div style={{color:"#A39C8A",fontSize:14,fontFamily:"'Inter',sans-serif",fontWeight:700}}>{termos.length?"Nenhum resultado para a pesquisa.":"Nenhum lançamento neste mês."}</div></div>
+                      :lista.map((t,i)=><LancRow key={t.id} t={t} last={i===lista.length-1}/>)
+                    }
+                  </div>
+                </>
+              );
+            })()}
           </>
         )}
       </div>
@@ -858,6 +915,20 @@ export default function App() {
             <div style={{height:16}}/>
             <button className="btn-success" onClick={lancarReceita}>Registrar Receita</button>
             <button className="btn-ghost" onClick={()=>setShowFormReceita(false)}>Cancelar</button>
+          </div>
+        </div>
+      )}
+      {editReceita&&(
+        <div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setEditReceita(null);}}>
+          <div className="sheet">
+            <div className="handle"/>
+            <div style={{fontSize:20,fontWeight:800,color:"#235448",marginBottom:4,fontFamily:"'Fraunces',serif"}}>Editar Receita</div>
+            <div style={{fontSize:11,color:"#A39C8A",marginBottom:18,fontFamily:"'Inter',sans-serif"}}>{fmtDate(editReceita.semana)}</div>
+            <FormBodyReceita form={formReceita} setForm={setFormReceita} erro={erroReceita} setErro={setErroReceita}/>
+            <div style={{height:16}}/>
+            <button className="btn-success" onClick={salvarEdicaoReceita}>Salvar Alterações</button>
+            <button className="btn-danger" onClick={()=>{setDelReceita(editReceita);setEditReceita(null);}}>Excluir Receita</button>
+            <button className="btn-ghost" onClick={()=>setEditReceita(null)}>Cancelar</button>
           </div>
         </div>
       )}
