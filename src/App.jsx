@@ -134,6 +134,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#2E6E5E!import
 .btn-danger{background:none;border:2px solid #B4483C;border-radius:12px;padding:14px;font-size:14px;font-family:'Inter',sans-serif;font-weight:600;cursor:pointer;width:100%;color:#B4483C;transition:all .2s;margin-top:10px}
 .btn-danger:hover{background:#B4483C;color:#fff}
 .app-wrap{max-width:480px}
+.kpi-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+@media (min-width:900px){.kpi-grid{grid-template-columns:repeat(6,1fr);gap:8px}.app-wrap.wide{max-width:1240px}}
 .navtabs{scrollbar-width:none}.navtabs::-webkit-scrollbar{display:none}
 html,body{background:#F4F2ED}
 @media (min-width:900px){.app-wrap{max-width:900px}.sheet{max-width:520px}}
@@ -499,10 +501,10 @@ function Relatorio({ mesKey, goPeriodo, aplicadoTodos }) {
   const pc=(a,b)=>b>0?((a/b)*100).toFixed(1):"0.0";
   const vazio = total===0 && receita===0 && aportes===0 && agend.length===0;
   const kpis = [
-    {l:"Despesa",v:fmt(total),sub:`${lc.length} lançamentos${len>1?` · média ${fmt(total/decorridos)}/mês`:""}`,cor:"#173C33"},
+    {l:"Saldo (receita − despesa)",v:fmt(saldo),sub:saldo>=0?"positivo":"negativo",cor:saldo>=0?"#173C33":"#B4483C"},
     {l:`vs ${rotAnt}`,v:diff!=null?`${diff>0?"+":""}${diff.toFixed(1)}%`:"—",sub:diff!=null?(diff<0?"↓ reduziu":"↑ aumentou"):"sem comparativo",cor:diff!=null?(diff<0?"#2E6E5E":"#B4483C"):"#A39C8A"},
     {l:"Receita",v:fmt(receita),sub:`${dados.cur.r.length} entrada(s)`,cor:"#2E6E5E"},
-    {l:"Saldo (receita − despesa)",v:fmt(saldo),sub:saldo>=0?"positivo":"negativo",cor:saldo>=0?"#173C33":"#B4483C"},
+    {l:"Despesa",v:fmt(total),sub:`${lc.length} lançamentos${len>1?` · média ${fmt(total/decorridos)}/mês`:""}`,cor:"#173C33"},
     {l:"Aplicado no período",v:fmt(aportes),sub:rend>0?`+ ${fmt(rend)} de rendimento`:"sem rendimento",cor:"#235448"},
     {l:"A executar (programado)",v:fmt(somaV(agend)),sub:`${agend.length} conta(s)`,cor:"#8A6A1F"},
   ];
@@ -512,11 +514,11 @@ function Relatorio({ mesKey, goPeriodo, aplicadoTodos }) {
       {vazio
         ?<div style={{...card,padding:24,textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>📭</div><div style={{color:"#A39C8A",fontSize:14,fontWeight:700}}>Nenhum lançamento neste período.</div></div>
         :<>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:6}}>
+          <div className="kpi-grid" style={{marginBottom:6}}>
             {kpis.map((k,i)=>(
               <div key={i} style={{background:"#fff",borderRadius:14,padding:"14px",boxShadow:"0 2px 8px #173C3310"}}>
                 <div style={{fontSize:9,color:"#A39C8A",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:5,lineHeight:1.3}}>{k.l}</div>
-                <div style={{fontSize:k.v.length>12?15:17,fontWeight:800,color:k.cor,fontFamily:"'Fraunces',serif",lineHeight:1.1}}>{k.v}</div>
+                <div style={{fontSize:k.v.length>12?14:16,fontWeight:800,color:k.cor,fontFamily:"'Fraunces',serif",lineHeight:1.1}}>{k.v}</div>
                 <div style={{fontSize:10,color:"#A39C8A",marginTop:5,fontWeight:600,lineHeight:1.3}}>{k.sub}</div>
               </div>
             ))}
@@ -658,7 +660,7 @@ export default function App() {
   const [recAberto,setRecAberto]           = useState(false);
   const [extAberto,setExtAberto]           = useState(false);
   const [showRend,setShowRend]             = useState(false);
-  const [formRend,setFormRend]             = useState({valorDigits:"",data:hoje()});
+  const [formRend,setFormRend]             = useState({taxa:"",data:hoje()});
   const [erroRend,setErroRend]             = useState(null);
   const lastTouch = useRef(0);
   const abertoEm = useRef(0);
@@ -727,8 +729,22 @@ export default function App() {
     const m=mesAtual.mes;
     const rend=aplicadoTodos.filter(t=>t.meio==="Rendimento"&&t.mes===m).reduce((s,t)=>s+t.valor,0);
     const base=aplicadoTodos.filter(t=>t.mes<m).reduce((s,t)=>s+t.valor,0);
-    return {rend,base,pct:base>0?(rend/base)*100:0,tem:aplicadoTodos.some(t=>t.meio==="Rendimento"&&t.mes===m)};
+    const regs=aplicadoTodos.filter(t=>t.meio==="Rendimento"&&t.mes===m).sort((a,b)=>b.data.localeCompare(a.data));
+    const pct=base>0?(rend/base)*100:0;
+    let aa=null;
+    if(regs.length){
+      const mt=(regs[0].obs||"").match(/([\d]+(?:,\d+)?)% a\.a\./);
+      aa=mt?parseFloat(mt[1].replace(",",".")):(base>0&&rend>0?(Math.pow(1+rend/base,12)-1)*100:null);
+    }
+    return {rend,base,pct,aa,tem:regs.length>0};
   },[aplicadoTodos,mesAtual.mes]);
+  const taxaNum = v => { const n=parseFloat(String(v).replace(",",".")); return isFinite(n)?n:0; };
+  const calcRend = (taxaStr,dataStr) => {
+    const a=taxaNum(taxaStr);
+    const base=aplicadoTodos.filter(t=>t.data<=dataStr && !(t.meio==="Rendimento"&&t.mes===dataStr.slice(0,7))).reduce((s,t)=>s+t.valor,0);
+    const mensal=a>0?Math.pow(1+a/100,1/12)-1:0;
+    return {a,base,mensal,valor:Math.round(base*mensal*100)/100};
+  };
   const aplicadoOrd = useMemo(()=>[...aplicadoTodos].sort((a,b)=>new Date(b.data)-new Date(a.data)),[aplicadoTodos]);
   const byCat      = useMemo(()=>{
     const m={};
@@ -848,12 +864,15 @@ export default function App() {
     setForm({...emptyForm(),data:amanha()});setErro({});setShowForm(true);
   };
   const salvarRendimento=async ()=>{
-    if(!formRend.valorDigits||parseInt(formRend.valorDigits)===0){setErroRend("Informe o valor");return;}
     if(!formRend.data){setErroRend("Informe a data");return;}
+    const c=calcRend(formRend.taxa,formRend.data);
+    if(c.a<=0||c.a>100){setErroRend("Informe a taxa anual (ex: 11,5)");return;}
+    if(c.base<=0){setErroRend("Não há montante aplicado até essa data");return;}
+    if(c.valor<=0){setErroRend("Rendimento calculado é zero");return;}
     const res=await sbPost({
       id: uid(), cliente_id: CID, mes: formRend.data.slice(0,7), centro: "empresa", categoria: "Aplicado",
-      descricao: "Rendimento CDB", valor: d2float(formRend.valorDigits), meio: "Rendimento", data: formRend.data,
-      obs: "", excluido: false, recorrente: false, motivo_exclusao: "",
+      descricao: "Rendimento CDB", valor: c.valor, meio: "Rendimento", data: formRend.data,
+      obs: `${c.a.toFixed(2).replace(".",",")}% a.a. sobre ${fmt(c.base)}`, excluido: false, recorrente: false, motivo_exclusao: "",
     });
     setShowRend(false);
     if(res){ load(); showToast("✓ Rendimento registrado"); }
@@ -953,7 +972,7 @@ export default function App() {
   );
 
   return (
-    <div style={{fontFamily:"'Inter',sans-serif",background:"#F4F2ED",minHeight:"100vh",color:"#173C33",margin:"0 auto"}} className="app-wrap">
+    <div style={{fontFamily:"'Inter',sans-serif",background:"#F4F2ED",minHeight:"100vh",color:"#173C33",margin:"0 auto"}} className={`app-wrap${view==="relatorio"?" wide":""}`}>
       <style>{CSS}</style>
       <div style={{background:"#fff",borderBottom:"1px solid #E3DFD3",padding:"12px 20px 0",position:"sticky",top:0,zIndex:50,boxShadow:"0 2px 12px #173C3310"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
@@ -1122,10 +1141,11 @@ export default function App() {
                   <div style={{minWidth:0}}>
                     <div style={{fontSize:10,letterSpacing:"0.12em",color:"#C9A566",textTransform:"uppercase",fontWeight:700}}>Rendimento CDB · {MESES_NOMES_FULL[parseInt(mesAtual.mes.slice(5,7),10)-1]}</div>
                     <div style={{fontSize:15,color:"#F4F2ED",fontWeight:800,marginTop:4,fontFamily:"'Inter',sans-serif"}}>{rendInfo.tem?`+ ${fmt(rendInfo.rend)}`:"Sem rendimento registrado"}</div>
+                    {rendInfo.tem&&rendInfo.base>0&&<div style={{fontSize:10.5,color:"#C9A566",marginTop:3,fontWeight:600}}>≈ {rendInfo.pct.toFixed(2).replace(".",",")}% a.m. sobre o montante</div>}
                   </div>
-                  {rendInfo.tem&&rendInfo.base>0&&<div style={{background:"#C9A566",color:"#173C33",borderRadius:20,padding:"6px 12px",fontSize:13,fontWeight:800,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>{rendInfo.pct.toFixed(2).replace(".",",")}% a.m.</div>}
+                  {rendInfo.tem&&rendInfo.aa!=null&&<div style={{background:"#C9A566",color:"#173C33",borderRadius:20,padding:"6px 12px",fontSize:13,fontWeight:800,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>{rendInfo.aa.toFixed(2).replace(".",",")}% a.a.</div>}
                 </div>
-                {!isFechado&&<button onClick={()=>{setFormRend({valorDigits:"",data:hoje()});setErroRend(null);setShowRend(true);}} style={{marginTop:12,background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{rendInfo.tem?"+ Outro rendimento":"+ Registrar rendimento do mês"}</button>}
+                {!isFechado&&<button onClick={()=>{setFormRend({taxa:"",data:hoje()});setErroRend(null);setShowRend(true);}} style={{marginTop:12,background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{rendInfo.tem?"+ Outro rendimento":"+ Registrar rendimento do mês"}</button>}
               </div>
             </div>
             <div role="button" onClick={()=>setExtAberto(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:10,fontWeight:700,cursor:"pointer",userSelect:"none"}}>
@@ -1292,13 +1312,13 @@ export default function App() {
           <div className="sheet">
             <div className="handle"/>
             <div style={{fontSize:20,fontWeight:800,color:"#173C33",marginBottom:4,fontFamily:"'Fraunces',serif"}}>Rendimento CDB</div>
-            <div style={{fontSize:11,color:"#A39C8A",marginBottom:18,fontFamily:"'Inter',sans-serif"}}>Valor que a aplicação rendeu. O percentual é calculado sobre o montante do início do mês.</div>
+            <div style={{fontSize:11,color:"#A39C8A",marginBottom:18,fontFamily:"'Inter',sans-serif"}}>Informe a taxa anual. O app calcula o rendimento em reais sobre o montante aplicado.</div>
             <div style={{marginBottom:16}}>
-              <label style={FL}>Valor rendido *</label>
+              <label style={FL}>Taxa anual (% a.a.) *</label>
               <div style={{position:"relative"}}>
-                <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:14,color:"#7A7466",fontFamily:"'Inter',sans-serif",fontWeight:700}}>R$</span>
-                <input style={{...INP(erroRend),paddingLeft:40,fontSize:22,fontWeight:800,color:"#2E6E5E"}} placeholder="0,00" inputMode="numeric"
-                  value={formRend.valorDigits?d2brl(formRend.valorDigits):""} onChange={e=>{setFormRend(f=>({...f,valorDigits:e.target.value.replace(/\D/g,"")}));setErroRend(null);}}/>
+                <input style={{...INP(erroRend),paddingRight:60,fontSize:22,fontWeight:800,color:"#2E6E5E"}} placeholder="0,00" inputMode="decimal"
+                  value={formRend.taxa} onChange={e=>{setFormRend(f=>({...f,taxa:e.target.value.replace(/[^\d.,]/g,"")}));setErroRend(null);}}/>
+                <span style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",fontSize:13,color:"#7A7466",fontFamily:"'Inter',sans-serif",fontWeight:700}}>% a.a.</span>
               </div>
               {erroRend&&<div style={{fontSize:11,color:"#B4483C",marginTop:4,fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{erroRend}</div>}
             </div>
@@ -1306,6 +1326,16 @@ export default function App() {
               <label style={FL}>Data *</label>
               <input type="date" style={INP(false)} value={formRend.data} onChange={e=>setFormRend(f=>({...f,data:e.target.value}))}/>
             </div>
+            {(()=>{
+              const c=calcRend(formRend.taxa,formRend.data||hoje());
+              return c.a>0&&c.base>0?(
+                <div style={{marginTop:14,background:"#F4F2ED",borderRadius:10,padding:"12px 14px",fontFamily:"'Inter',sans-serif"}}>
+                  <div style={{fontSize:11,color:"#7A7466",fontWeight:600}}>Montante base: {fmt(c.base)}</div>
+                  <div style={{fontSize:11,color:"#7A7466",fontWeight:600,marginTop:2}}>Equivalente mensal: {(c.mensal*100).toFixed(3).replace(".",",")}% a.m.</div>
+                  <div style={{fontSize:15,color:"#235448",fontWeight:800,marginTop:6}}>Rendimento do mês: + {fmt(c.valor)}</div>
+                </div>
+              ):null;
+            })()}
             <div style={{height:16}}/>
             <button className="btn-success" onClick={salvarRendimento}>Registrar Rendimento</button>
             <button className="btn-ghost" onClick={()=>setShowRend(false)}>Cancelar</button>
