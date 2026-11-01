@@ -92,7 +92,9 @@ const MESES = gerarMeses();
 
 const fmt     = v => v.toLocaleString("pt-BR",{style:"currency",currency:"BRL"});
 const fmtDate = d => { const[,m,day]=d.split("-"); return `${day}/${m}`; };
-const hoje    = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const dLocal  = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const hoje    = () => dLocal(new Date());
+const amanha  = () => { const d=new Date(); d.setDate(d.getDate()+1); return dLocal(d); };
 const d2brl   = d => { const n=parseInt(d||"0",10); return `${Math.floor(n/100).toLocaleString("pt-BR")},${String(n%100).padStart(2,"0")}`; };
 const d2float = d => parseInt(d||"0",10)/100;
 const float2d = v => String(Math.round(v*100));
@@ -134,9 +136,11 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#2E6E5E!import
 .fab{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#173C33,#2E6E5E);color:#F4F2ED;border:none;border-radius:50px;padding:15px 28px;font-size:14px;font-family:'Inter',sans-serif;font-weight:700;cursor:pointer;box-shadow:0 6px 24px #173C3345;z-index:90;display:flex;align-items:center;gap:8px;transition:all .2s;white-space:nowrap}
 .fab-gold{background:linear-gradient(135deg,#A6822E,#C9A566);box-shadow:0 6px 24px #A6822E40}
 .fab:hover{transform:translateX(-50%) translateY(-2px)} .fab:active{transform:translateX(-50%) scale(.98)}
-.overlay{position:fixed;inset:0;background:#00000055;z-index:200;display:flex;align-items:flex-end}
-.sheet{background:#fff;border-radius:24px 24px 0 0;padding:8px 20px 40px;width:100%;max-width:480px;margin:0 auto;animation:sheetUp .28s cubic-bezier(.32,.72,0,1);max-height:94vh;overflow-y:auto}
-@keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.ctx-item{display:flex;align-items:center;gap:12px;width:100%;background:none;border:none;color:#F3F3F3;font-size:13px;font-family:'Inter',sans-serif;padding:9px 12px;border-radius:6px;cursor:default;text-align:left}.ctx-item:hover{background:#FFFFFF14}.ctx-item.ctx-red{color:#FF9A92}
+.overlay{position:fixed;inset:0;background:#00000055;z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
+.sheet{background:#fff;border-radius:20px;padding:22px 20px 20px;width:100%;max-width:440px;margin:0 auto;animation:popIn .2s ease-out;max-height:88vh;overflow-y:auto;box-shadow:0 12px 40px #00000040}
+.sheet .handle{display:none}
+@keyframes popIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}
 .overlay-top{position:fixed;inset:0;background:#00000055;z-index:200;display:flex;align-items:flex-start;padding-top:120px}
 .handle{width:40px;height:4px;background:#e8e8e8;border-radius:2px;margin:12px auto 20px}
 .row-item{transition:background .12s;border-radius:8px} .row-item:active{background:#F4F2ED}
@@ -279,7 +283,7 @@ function FormBody({form,setForm,erro,setErro,permiteRecorrencia}) {
         <select style={INP(erro.meio)} value={form.meio}
           onChange={e=>{setForm(f=>({...f,meio:e.target.value}));setErro(r=>({...r,meio:null}));}}>
           <option value="">Selecione...</option>
-          {MEIOS.map(m=><option key={m} value={m}>{m}</option>)}
+          {(!form.meio||MEIOS.includes(form.meio)?MEIOS:[...MEIOS,form.meio]).map(m=><option key={m} value={m}>{m}</option>)}
         </select>
         <Err k="meio"/>
         {form.meio==="Pluxe"&&(
@@ -395,9 +399,17 @@ export default function App() {
   const [popProg,setPopProg]               = useState(false);
   const [acaoItem,setAcaoItem]             = useState(null);
   const [acaoReceita,setAcaoReceita]       = useState(null);
+  const [ctx,setCtx]                       = useState(null);
+  const [progMode,setProgMode]             = useState(false);
+  const [recAberto,setRecAberto]           = useState(false);
+  const [extAberto,setExtAberto]           = useState(false);
+  const [showRend,setShowRend]             = useState(false);
+  const [formRend,setFormRend]             = useState({valorDigits:"",data:hoje()});
+  const [erroRend,setErroRend]             = useState(null);
+  const lastTouch = useRef(0);
   const abertoEm = useRef(0);
   const pressTimer = useRef(null);
-  const [fluxoAberto,setFluxoAberto]       = useState(true);
+  const [fluxoAberto,setFluxoAberto]       = useState(false);
   const [motivoExc,setMotivoExc]           = useState("");
   const [motivoErr,setMotivoErr]           = useState(false);
   const [form,setForm]                     = useState(emptyForm());
@@ -429,10 +441,10 @@ export default function App() {
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    if (showForm || showFormReceita || editItem || delItem || delReceita || editReceita || acaoItem || acaoReceita) return;
+    if (showForm || showFormReceita || editItem || delItem || delReceita || editReceita || acaoItem || acaoReceita || ctx || showRend) return;
     const t = setInterval(() => load(true), 5000);
     return () => clearInterval(t);
-  }, [load, showForm, showFormReceita, editItem, delItem, delReceita, editReceita, acaoItem, acaoReceita]);
+  }, [load, showForm, showFormReceita, editItem, delItem, delReceita, editReceita, acaoItem, acaoReceita, ctx, showRend]);
 
   useEffect(() => {
     fetchCategorias().then(res => {
@@ -457,6 +469,12 @@ export default function App() {
   const sorted     = useMemo(()=>[...items].sort((a,b)=>new Date(b.data)-new Date(a.data)),[items]);
   const sortedReceitas = useMemo(()=>[...receitas].sort((a,b)=>new Date(b.semana)-new Date(a.semana)),[receitas]);
   const totalAplicadoGeral = useMemo(()=>aplicadoTodos.reduce((s,t)=>s+t.valor,0),[aplicadoTodos]);
+  const rendInfo = useMemo(()=>{
+    const m=mesAtual.mes;
+    const rend=aplicadoTodos.filter(t=>t.meio==="Rendimento"&&t.mes===m).reduce((s,t)=>s+t.valor,0);
+    const base=aplicadoTodos.filter(t=>t.mes<m).reduce((s,t)=>s+t.valor,0);
+    return {rend,base,pct:base>0?(rend/base)*100:0,tem:aplicadoTodos.some(t=>t.meio==="Rendimento"&&t.mes===m)};
+  },[aplicadoTodos,mesAtual.mes]);
   const aplicadoOrd = useMemo(()=>[...aplicadoTodos].sort((a,b)=>new Date(b.data)-new Date(a.data)),[aplicadoTodos]);
   const byCat      = useMemo(()=>{
     const m={};
@@ -561,6 +579,31 @@ export default function App() {
     setDelItem(null);setMotivoExc("");setMotivoErr(false);
     if(ok){ load(); showToast("Lançamento excluído"); }
   };
+  useEffect(()=>{
+    const h=e=>{
+      if(e.key!=="Escape") return;
+      setShowForm(false);setShowFormReceita(false);setEditItem(null);setDelItem(null);setMotivoExc("");setMotivoErr(false);
+      setDelReceita(null);setEditReceita(null);setAcaoItem(null);setAcaoReceita(null);setPopProg(false);setCtx(null);
+      setShowRend(false);setShowPicker(false);
+    };
+    window.addEventListener("keydown",h);
+    return ()=>window.removeEventListener("keydown",h);
+  },[]);
+  const programarDespesa=()=>{
+    setPopProg(false);setProgMode(true);
+    setForm({...emptyForm(),data:amanha()});setErro({});setShowForm(true);
+  };
+  const salvarRendimento=async ()=>{
+    if(!formRend.valorDigits||parseInt(formRend.valorDigits)===0){setErroRend("Informe o valor");return;}
+    if(!formRend.data){setErroRend("Informe a data");return;}
+    const res=await sbPost({
+      id: uid(), cliente_id: CID, mes: formRend.data.slice(0,7), centro: "empresa", categoria: "Aplicado",
+      descricao: "Rendimento CDB", valor: d2float(formRend.valorDigits), meio: "Rendimento", data: formRend.data,
+      obs: "", excluido: false, recorrente: false, motivo_exclusao: "",
+    });
+    setShowRend(false);
+    if(res){ load(); showToast("✓ Rendimento registrado"); }
+  };
   const provisionar=async t=>{
     const ok = await sbPatch(t.id, { data: hoje(), mes: hoje().slice(0,7) });
     if(ok){ load(); showToast("✓ Movido para executado"); }
@@ -586,15 +629,19 @@ export default function App() {
     if(ok){ load(); showToast("Receita excluída"); }
   };
 
-  const anyModal=showForm||showFormReceita||!!editItem||!!delItem||!!delReceita||!!editReceita||popProg||!!acaoItem||!!acaoReceita;
+  const anyModal=showForm||showFormReceita||!!editItem||!!delItem||!!delReceita||!!editReceita||popProg||!!acaoItem||!!acaoReceita||showRend;
   const card={background:"#fff",borderRadius:14,padding:"4px 16px",boxShadow:"0 2px 8px #173C3310",marginBottom:12};
   const rowDiv=last=>({padding:"13px 0",borderBottom:last?"none":"1px solid #F0EEE6",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10});
 
   const abrirAcao=t=>{abertoEm.current=Date.now();setAcaoItem(t);};
   const abrirAcaoR=r=>{abertoEm.current=Date.now();setAcaoReceita(r);};
-  const lpProps=(fn,x)=>({
-    onContextMenu:e=>{e.preventDefault();clearTimeout(pressTimer.current);fn(x);},
-    onTouchStart:()=>{clearTimeout(pressTimer.current);pressTimer.current=setTimeout(()=>fn(x),500);},
+  const lpProps=(kind,x)=>({
+    onContextMenu:e=>{
+      e.preventDefault();clearTimeout(pressTimer.current);
+      if(Date.now()-lastTouch.current<1500) return;
+      setCtx({x:e.clientX,y:e.clientY,kind,item:x});
+    },
+    onTouchStart:()=>{lastTouch.current=Date.now();clearTimeout(pressTimer.current);pressTimer.current=setTimeout(()=>(kind==="lanc"?abrirAcao:abrirAcaoR)(x),500);},
     onTouchEnd:()=>clearTimeout(pressTimer.current),
     onTouchMove:()=>clearTimeout(pressTimer.current),
     onTouchCancel:()=>clearTimeout(pressTimer.current),
@@ -602,13 +649,7 @@ export default function App() {
   const LancRow=({t,last,limpo})=>(
     <div className={`row-item${t.excluido?" row-excluido":""}`}
       style={limpo&&!t.excluido&&!isFechado?{...rowDiv(last),userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none"}:rowDiv(last)}
-      {...(limpo&&!t.excluido&&!isFechado?{
-        onContextMenu:e=>{e.preventDefault();clearTimeout(pressTimer.current);abrirAcao(t);},
-        onTouchStart:()=>{clearTimeout(pressTimer.current);pressTimer.current=setTimeout(()=>abrirAcao(t),500);},
-        onTouchEnd:()=>clearTimeout(pressTimer.current),
-        onTouchMove:()=>clearTimeout(pressTimer.current),
-        onTouchCancel:()=>clearTimeout(pressTimer.current),
-      }:{})}>
+      {...(limpo&&!t.excluido&&!isFechado?lpProps("lanc",t):{})}>
       <div style={{display:"flex",gap:10,alignItems:"center",flex:1,minWidth:0}}>
         <div style={{width:4,height:t.excluido?16:40,background:t.excluido?"#ddd":CAT_CORES[t.categoria]||"#999",borderRadius:3,flexShrink:0}}/>
         <div style={{minWidth:0}}>
@@ -617,14 +658,16 @@ export default function App() {
             <span style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif"}}>{fmtDate(t.data)} · {t.categoria} · {t.meio}</span>
             {t.meio==="Pluxe"&&!t.excluido&&<span className="badge" style={{background:"#FBF3E4",color:"#8A6A1F",border:"1px solid #EAD9AE"}}>Pluxe · não conta</span>}
             {t.categoria==="Aplicado"&&!t.excluido&&<span className="badge" style={{background:"#EAF3EF",color:"#235448",border:"1px solid #BFDCD1"}}>Aplicado · não conta</span>}
-            {t.data>hoje()&&!t.excluido&&<span className="badge" style={{background:"#FBECEA",color:"#8A3A30",border:"1px solid #EBBDB6"}}>Agendado · {fmtDate(t.data)}</span>}
           </div>
           {t.obs&&!t.excluido&&<div style={{fontSize:11,color:"#A39C8A",marginTop:1,fontStyle:"italic",fontFamily:"'Inter',sans-serif"}}>{t.obs}</div>}
           {t.excluido&&<span className="badge" style={{background:"#FBECEA",color:"#B4483C",border:"1px solid #EBBDB6"}}>Valor excluído da soma de valores</span>}
         </div>
       </div>
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
-        <div style={{fontSize:15,fontWeight:800,color:t.excluido?"#bbb":"#173C33",fontFamily:"'Inter',sans-serif"}}>{fmt(t.valor)}</div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:15,fontWeight:800,color:t.excluido?"#bbb":"#173C33",fontFamily:"'Inter',sans-serif"}}>{fmt(t.valor)}</div>
+          {t.data>hoje()&&!t.excluido&&<div style={{fontSize:9.5,fontWeight:700,color:"#8A3A30",marginTop:2,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>Agendado · {fmtDate(t.data)}</div>}
+        </div>
         {!limpo&&!t.excluido&&!isFechado&&t.data>hoje()&&(
           <button onClick={()=>provisionar(t)} title="Mover para executado" style={{background:"#EAF3EF",border:"1px solid #BFDCD1",color:"#235448",borderRadius:8,fontSize:10.5,fontWeight:700,padding:"5px 8px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>Executar</button>
         )}
@@ -640,7 +683,7 @@ export default function App() {
     </div>
   );
   const ReceitaRow=({r,last})=>(
-    <div className="row-item" style={!isFechado?{...rowDiv(last),userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none"}:rowDiv(last)} {...(!isFechado?lpProps(abrirAcaoR,r):{})}>
+    <div className="row-item" style={!isFechado?{...rowDiv(last),userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none"}:rowDiv(last)} {...(!isFechado?lpProps("rec",r):{})}>
       <div style={{display:"flex",gap:10,alignItems:"center",flex:1,minWidth:0}}>
         <div style={{width:4,height:40,background:"#2E6E5E",borderRadius:3,flexShrink:0}}/>
         <div style={{minWidth:0}}>
@@ -796,10 +839,13 @@ export default function App() {
               ))}
             </div>}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:20,marginBottom:10}}>
-              <div style={{fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",fontWeight:700}}>Recebimentos do Mês</div>
+              <div role="button" onClick={()=>setRecAberto(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",fontWeight:700,cursor:"pointer",userSelect:"none"}}>
+                <span>Recebimentos do Mês</span>
+                <span style={{display:"inline-block",transform:recAberto?"rotate(90deg)":"none",transition:"transform .15s",fontSize:9}}>▶</span>
+              </div>
               <div style={{fontSize:11,color:"#A39C8A",fontWeight:700}}>{receitas.length} entrada(s)</div>
             </div>
-            <div style={card}>
+            {recAberto&&<div style={card}>
               {sortedReceitas.length===0
                 ?<div style={{padding:"24px 0",textAlign:"center"}}>
                   <div style={{fontSize:32,marginBottom:8}}>💰</div>
@@ -808,7 +854,7 @@ export default function App() {
                 </div>
                 :sortedReceitas.map((r,i)=><ReceitaRow key={r.id} r={r} last={i===sortedReceitas.length-1}/>)
               }
-            </div>
+            </div>}
           </>
         )}
         {view==="aplicado"&&(
@@ -817,9 +863,22 @@ export default function App() {
               <div style={{fontSize:11,letterSpacing:"0.15em",color:"#C9A566",textTransform:"uppercase",marginBottom:6,fontWeight:700}}>Montante Aplicado (acumulado)</div>
               <div style={{fontSize:36,fontWeight:800,color:"#F4F2ED",lineHeight:1,fontFamily:"'Fraunces',serif"}}>{fmt(totalAplicadoGeral)}</div>
               <div style={{fontSize:11,color:"#C9A566",marginTop:8,fontWeight:600}}>{aplicadoTodos.length} lançamento{aplicadoTodos.length===1?"":"s"} · soma de todos os meses</div>
+              <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid #FFFFFF22"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontSize:10,letterSpacing:"0.12em",color:"#C9A566",textTransform:"uppercase",fontWeight:700}}>Rendimento CDB · {MESES_NOMES_FULL[parseInt(mesAtual.mes.slice(5,7),10)-1]}</div>
+                    <div style={{fontSize:15,color:"#F4F2ED",fontWeight:800,marginTop:4,fontFamily:"'Inter',sans-serif"}}>{rendInfo.tem?`+ ${fmt(rendInfo.rend)}`:"Sem rendimento registrado"}</div>
+                  </div>
+                  {rendInfo.tem&&rendInfo.base>0&&<div style={{background:"#C9A566",color:"#173C33",borderRadius:20,padding:"6px 12px",fontSize:13,fontWeight:800,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>{rendInfo.pct.toFixed(2).replace(".",",")}% a.m.</div>}
+                </div>
+                {!isFechado&&<button onClick={()=>{setFormRend({valorDigits:"",data:hoje()});setErroRend(null);setShowRend(true);}} style={{marginTop:12,background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{rendInfo.tem?"+ Outro rendimento":"+ Registrar rendimento do mês"}</button>}
+              </div>
             </div>
-            <div style={{fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:10,fontWeight:700}}>Extrato de Aplicações</div>
-            <div style={card}>
+            <div role="button" onClick={()=>setExtAberto(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:10,fontWeight:700,cursor:"pointer",userSelect:"none"}}>
+              <span>Extrato de Aplicações</span>
+              <span style={{display:"inline-block",transform:extAberto?"rotate(90deg)":"none",transition:"transform .15s",fontSize:9}}>▶</span>
+            </div>
+            {extAberto&&<div style={card}>
               {aplicadoOrd.length===0
                 ?<div style={{padding:"24px 0",textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>🌱</div><div style={{color:"#A39C8A",fontSize:14,fontFamily:"'Inter',sans-serif",fontWeight:700}}>Nenhuma aplicação registrada ainda.</div><div style={{color:"#A39C8A",fontSize:12,marginTop:4,fontFamily:"'Inter',sans-serif"}}>Lance uma despesa com categoria "Aplicado" pra começar a somar aqui.</div></div>
                 :aplicadoOrd.map((t,i)=>(
@@ -836,7 +895,7 @@ export default function App() {
                   </div>
                 ))
               }
-            </div>
+            </div>}
           </>
         )}
         {view==="categorias"&&(
@@ -911,7 +970,7 @@ export default function App() {
       </div>
 
       {!anyModal&&!isFechado&&view!=="caixa"&&(
-        <button className="fab" onClick={()=>{setForm(emptyForm());setErro({});setShowForm(true);}}>
+        <button className="fab" onClick={()=>{setProgMode(false);setForm(emptyForm());setErro({});setShowForm(true);}}>
           <span style={{fontSize:20,lineHeight:1}}>+</span> Novo Lançamento
         </button>
       )}
@@ -924,10 +983,10 @@ export default function App() {
         <div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setShowForm(false);}}>
           <div className="sheet">
             <div className="handle"/>
-            <div style={{fontSize:20,fontWeight:800,color:"#173C33",marginBottom:20,fontFamily:"'Fraunces',serif"}}>Novo Lançamento</div>
+            <div style={{fontSize:20,fontWeight:800,color:"#173C33",marginBottom:20,fontFamily:"'Fraunces',serif"}}>{progMode?"Programar Despesa":"Novo Lançamento"}</div>
             <FormBody form={form} setForm={setForm} erro={erro} setErro={setErro} permiteRecorrencia/>
             <div style={{height:16}}/>
-            <button className="btn-primary" onClick={lancar}>Registrar Lançamento</button>
+            <button className="btn-primary" onClick={lancar}>{progMode?"Programar":"Registrar Lançamento"}</button>
             <button className="btn-ghost" onClick={()=>setShowForm(false)}>Cancelar</button>
           </div>
         </div>
@@ -942,6 +1001,59 @@ export default function App() {
             <div style={{height:16}}/>
             <button className="btn-success" onClick={lancarReceita}>Registrar Receita</button>
             <button className="btn-ghost" onClick={()=>setShowFormReceita(false)}>Cancelar</button>
+          </div>
+        </div>
+      )}
+      {ctx&&(()=>{
+        const it=ctx.item, prog=ctx.kind==="lanc"&&it.data>hoje();
+        const W=230, Hh=ctx.kind==="lanc"?(prog?170:130):130;
+        const left=Math.max(8,Math.min(ctx.x,window.innerWidth-W-8)), top=Math.max(8,Math.min(ctx.y,window.innerHeight-Hh-8));
+        const ic=(d)=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
+        const fecha=()=>setCtx(null);
+        return (
+          <div style={{position:"fixed",inset:0,zIndex:300}} onClick={fecha} onContextMenu={e=>{e.preventDefault();fecha();}} onWheel={fecha}>
+            <div onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();}}
+              style={{position:"absolute",left,top,width:W,background:"rgba(40,42,44,0.97)",backdropFilter:"blur(14px)",WebkitBackdropFilter:"blur(14px)",border:"1px solid #FFFFFF1F",borderRadius:10,padding:6,boxShadow:"0 10px 30px #00000066"}}>
+              <div style={{padding:"6px 12px 8px",borderBottom:"1px solid #FFFFFF1A",marginBottom:4}}>
+                <div style={{fontSize:12,color:"#fff",fontWeight:700,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{it.descricao}</div>
+                <div style={{fontSize:11,color:"#A9ADB1",fontFamily:"'Inter',sans-serif"}}>{fmt(it.valor)}</div>
+              </div>
+              <button className="ctx-item" onClick={()=>{fecha();ctx.kind==="lanc"?openEdit(it):openEditReceita(it);}}>
+                {ic(<><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></>)}<span>Editar</span>
+              </button>
+              {prog&&<button className="ctx-item" onClick={()=>{fecha();provisionar(it);}}>
+                {ic(<><polyline points="20 6 9 17 4 12"/></>)}<span>Mover para executado</span>
+              </button>}
+              <div style={{height:1,background:"#FFFFFF1A",margin:"4px 2px"}}/>
+              <button className="ctx-item ctx-red" onClick={()=>{fecha();ctx.kind==="lanc"?setDelItem(it):setDelReceita(it);}}>
+                {ic(<><polyline points="3 6 5 6 21 6"/><path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></>)}<span>Excluir</span>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+      {showRend&&(
+        <div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setShowRend(false);}}>
+          <div className="sheet">
+            <div className="handle"/>
+            <div style={{fontSize:20,fontWeight:800,color:"#173C33",marginBottom:4,fontFamily:"'Fraunces',serif"}}>Rendimento CDB</div>
+            <div style={{fontSize:11,color:"#A39C8A",marginBottom:18,fontFamily:"'Inter',sans-serif"}}>Valor que a aplicação rendeu. O percentual é calculado sobre o montante do início do mês.</div>
+            <div style={{marginBottom:16}}>
+              <label style={FL}>Valor rendido *</label>
+              <div style={{position:"relative"}}>
+                <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:14,color:"#7A7466",fontFamily:"'Inter',sans-serif",fontWeight:700}}>R$</span>
+                <input style={{...INP(erroRend),paddingLeft:40,fontSize:22,fontWeight:800,color:"#2E6E5E"}} placeholder="0,00" inputMode="numeric"
+                  value={formRend.valorDigits?d2brl(formRend.valorDigits):""} onChange={e=>{setFormRend(f=>({...f,valorDigits:e.target.value.replace(/\D/g,"")}));setErroRend(null);}}/>
+              </div>
+              {erroRend&&<div style={{fontSize:11,color:"#B4483C",marginTop:4,fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{erroRend}</div>}
+            </div>
+            <div style={{marginBottom:8}}>
+              <label style={FL}>Data *</label>
+              <input type="date" style={INP(false)} value={formRend.data} onChange={e=>setFormRend(f=>({...f,data:e.target.value}))}/>
+            </div>
+            <div style={{height:16}}/>
+            <button className="btn-success" onClick={salvarRendimento}>Registrar Rendimento</button>
+            <button className="btn-ghost" onClick={()=>setShowRend(false)}>Cancelar</button>
           </div>
         </div>
       )}
@@ -972,10 +1084,11 @@ export default function App() {
       )}
       {popProg&&(
         <div className="overlay" onClick={e=>{if(e.target===e.currentTarget)setPopProg(false);}}>
-          <div className="sheet" style={{maxHeight:"60vh",overflowY:"auto"}}>
+          <div className="sheet" style={{maxHeight:"70vh",overflowY:"auto"}}>
             <div className="handle"/>
-            <div style={{fontSize:17,fontWeight:800,color:"#173C33",marginBottom:2,fontFamily:"'Fraunces',serif"}}>Gastos programados</div>
+            <div style={{fontSize:17,fontWeight:800,color:"#173C33",marginBottom:2,fontFamily:"'Fraunces',serif"}}>Executar</div>
             <div style={{fontSize:11,color:"#A39C8A",marginBottom:10,fontFamily:"'Inter',sans-serif"}}>{agendados.length} conta{agendados.length===1?"":"s"} · {fmt(totalAgendado)}</div>
+            {!isFechado&&<button onClick={programarDespesa} style={{width:"100%",background:"#F4F2ED",border:"1px dashed #C9A566",color:"#8A6A1F",borderRadius:10,fontSize:12.5,fontWeight:700,padding:"10px",marginBottom:6,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>+ Programar despesa</button>}
             {agendados.length===0
               ?<div style={{padding:"16px 0",textAlign:"center",color:"#A39C8A",fontSize:13,fontFamily:"'Inter',sans-serif",fontWeight:700}}>Nada programado neste mês.</div>
               :[...agendados].sort((a,b)=>new Date(a.data)-new Date(b.data)).map((t,i)=>(
