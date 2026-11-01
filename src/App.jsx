@@ -133,6 +133,10 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:#2E6E5E!import
 .btn-ghost:hover{border-color:#aaa;color:#333}
 .btn-danger{background:none;border:2px solid #B4483C;border-radius:12px;padding:14px;font-size:14px;font-family:'Inter',sans-serif;font-weight:600;cursor:pointer;width:100%;color:#B4483C;transition:all .2s;margin-top:10px}
 .btn-danger:hover{background:#B4483C;color:#fff}
+.app-wrap{max-width:480px}
+.navtabs{scrollbar-width:none}.navtabs::-webkit-scrollbar{display:none}
+html,body{background:#F4F2ED}
+@media (min-width:900px){.app-wrap{max-width:900px}.sheet{max-width:520px}}
 .fab{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#173C33,#2E6E5E);color:#F4F2ED;border:none;border-radius:50px;padding:15px 28px;font-size:14px;font-family:'Inter',sans-serif;font-weight:700;cursor:pointer;box-shadow:0 6px 24px #173C3345;z-index:90;display:flex;align-items:center;gap:8px;transition:all .2s;white-space:nowrap}
 .fab-gold{background:linear-gradient(135deg,#A6822E,#C9A566);box-shadow:0 6px 24px #A6822E40}
 .fab:hover{transform:translateX(-50%) translateY(-2px)} .fab:active{transform:translateX(-50%) scale(.98)}
@@ -373,6 +377,256 @@ function FormBodyReceita({form,setForm,erro,setErro}) {
     </>
   );
 }
+// ─── RELATÓRIO (Dashboard + Relatório do Painel do Mentor, com visão por período) ──
+const PERIODOS = [["mes","Mês",1],["tri","Trimestre",3],["sem","Semestre",6],["ano","Ano",12]];
+const mAdd = (key, n) => { const [y,m]=key.split("-").map(Number); const t=y*12+(m-1)+n; return `${Math.floor(t/12)}-${String(t%12+1).padStart(2,"0")}`; };
+function rangeDe(tipo, mesKey) {
+  const len = {mes:1,tri:3,sem:6,ano:12}[tipo];
+  const [y,m] = mesKey.split("-").map(Number);
+  const ini = `${y}-${String(Math.floor((m-1)/len)*len+1).padStart(2,"0")}`;
+  return { ini, fim: mAdd(ini,len-1), len };
+}
+function labelPeriodo(tipo, ini, len) {
+  const [y,m] = ini.split("-").map(Number);
+  const ab = i => ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"][(m-1+i)%12];
+  if (tipo==="mes") return `${MESES_NOMES_FULL[m-1]} ${y}`;
+  if (tipo==="tri") return `${Math.floor((m-1)/3)+1}º trimestre ${y} · ${ab(0)}–${ab(len-1)}`;
+  if (tipo==="sem") return `${Math.floor((m-1)/6)+1}º semestre ${y} · ${ab(0)}–${ab(len-1)}`;
+  return `Ano ${y}`;
+}
+async function fetchRange(ini, fim) {
+  try {
+    const [a,b] = await Promise.all([
+      fetch(`${SUPA_URL}/rest/v1/lancamentos?cliente_id=eq.${CID}&mes=gte.${ini}&mes=lte.${fim}&excluido=eq.false&order=data.desc`, { headers: H }),
+      fetch(`${SUPA_URL}/rest/v1/receitas?cliente_id=eq.${CID}&mes=gte.${ini}&mes=lte.${fim}&order=semana.desc`, { headers: H }),
+    ]);
+    return { l: a.ok ? await a.json() : [], r: b.ok ? await b.json() : [] };
+  } catch { return { l: [], r: [] }; }
+}
+const somaV = a => a.reduce((s,x)=>s+x.valor,0);
+const agCat = list => { const m={}; list.forEach(l=>{m[l.categoria]=(m[l.categoria]||0)+l.valor;}); return Object.entries(m).map(([cat,val])=>({cat,val,cor:CAT_CORES[cat]||"#999"})).sort((a,b)=>b.val-a.val); };
+function Donut({ segs, size=124 }) {
+  const r=28, cx=45, cy=45, circ=2*Math.PI*r;
+  const total=segs.reduce((s,x)=>s+x.val,0);
+  let off=0;
+  return (
+    <svg width={size} height={size} viewBox="0 0 90 90">
+      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#E9E5D8" strokeWidth="10"/>
+      {segs.map((sg,i)=>{
+        const len=total>0?(sg.val/total)*circ:0;
+        const el=<circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={sg.cor} strokeWidth="10"
+          strokeDasharray={`${Math.max(len-1.5,0)} ${circ}`} strokeDashoffset={-off}
+          style={{transform:"rotate(-90deg)",transformOrigin:"50% 50%"}}/>;
+        off+=len; return el;
+      })}
+    </svg>
+  );
+}
+function Relatorio({ mesKey, goPeriodo, aplicadoTodos }) {
+  const [tipo,setTipo]   = useState("mes");
+  const [dados,setDados] = useState(null);
+  const [ab,setAb]       = useState({pan:false,dist:false,det:false});
+  const [catAb,setCatAb] = useState({});
+  const { ini, fim, len } = rangeDe(tipo, mesKey);
+  useEffect(()=>{
+    let ativo=true; setDados(null);
+    Promise.all([fetchRange(ini,fim), fetchRange(mAdd(ini,-len), mAdd(ini,-1))])
+      .then(([cur,prev])=>{ if(ativo) setDados({cur,prev}); });
+    return ()=>{ ativo=false; };
+  },[ini,fim,len]);
+
+  const card={background:"#fff",borderRadius:14,padding:"4px 16px",boxShadow:"0 2px 8px #173C3310",marginBottom:12};
+  const hj=hoje(), mesHoje=hj.slice(0,7);
+  const primeiro = MESES[0].mes, ultimo = MESES[MESES.length-1].mes;
+  const podeAnt = mAdd(ini,-1) >= primeiro, podeProx = mAdd(fim,1) <= ultimo;
+  const navBtn = (dir,ok,txt)=>(
+    <button onClick={()=>ok&&goPeriodo(dir*len)} disabled={!ok} style={{width:38,height:38,borderRadius:10,border:"2px solid #E3DFD3",background:"#fff",color:ok?"#173C33":"#CFCBBE",fontSize:18,cursor:ok?"pointer":"default",fontFamily:"'Inter',sans-serif"}}>{txt}</button>
+  );
+  const Sec = ({k,titulo,children}) => (
+    <div style={{marginBottom:6}}>
+      <div role="button" onClick={()=>setAb(a=>({...a,[k]:!a[k]}))} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",margin:"16px 0 10px",fontWeight:700,cursor:"pointer",userSelect:"none"}}>
+        <span>{titulo}</span>
+        <span style={{display:"inline-block",transform:ab[k]?"rotate(90deg)":"none",transition:"transform .15s",fontSize:9}}>▶</span>
+      </div>
+      {ab[k]&&children}
+    </div>
+  );
+  const header = (
+    <>
+      <div style={{display:"flex",gap:4,background:"#fff",borderRadius:10,padding:4,boxShadow:"0 2px 8px #173C3310",marginBottom:12}}>
+        {PERIODOS.map(([k,l])=>(
+          <button key={k} onClick={()=>setTipo(k)} style={{flex:1,border:"none",borderRadius:8,padding:"9px 2px",fontSize:12,fontWeight:700,fontFamily:"'Inter',sans-serif",cursor:"pointer",background:tipo===k?"#173C33":"transparent",color:tipo===k?"#fff":"#A39C8A"}}>{l}</button>
+        ))}
+      </div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10,marginBottom:14}}>
+        {navBtn(-1,podeAnt,"‹")}
+        <div style={{fontSize:16,fontWeight:800,color:"#173C33",fontFamily:"'Fraunces',serif",textAlign:"center"}}>{labelPeriodo(tipo,ini,len)}</div>
+        {navBtn(1,podeProx,"›")}
+      </div>
+    </>
+  );
+  if (!dados) return <>{header}<div style={{...card,padding:24,textAlign:"center",color:"#A39C8A",fontSize:14,fontWeight:700}}>Carregando…</div></>;
+
+  const contFn = l => l.meio!=="Pluxe" && l.categoria!=="Aplicado" && l.data<=hj;
+  const lc = dados.cur.l.filter(contFn), lp = dados.prev.l.filter(contFn);
+  const agend = dados.cur.l.filter(l=>l.meio!=="Pluxe"&&l.categoria!=="Aplicado"&&l.data>hj);
+  const total=somaV(lc), totAnt=somaV(lp), temAnt=lp.length>0;
+  const diff = totAnt>0 ? ((total-totAnt)/totAnt)*100 : null;
+  const receita=somaV(dados.cur.r), saldo=receita-total;
+  const apl = aplicadoTodos.filter(t=>t.mes>=ini&&t.mes<=fim);
+  const aportes=somaV(apl.filter(t=>t.meio!=="Rendimento")), rend=somaV(apl.filter(t=>t.meio==="Rendimento"));
+  const meses = Array.from({length:len},(_,i)=>mAdd(ini,i));
+  const decorridos = Math.max(1, meses.filter(k=>k<=mesHoje).length);
+  const linhas = meses.map(k=>{
+    const d=somaV(lc.filter(l=>l.mes===k)), r=somaV(dados.cur.r.filter(x=>x.mes===k));
+    const a=somaV(apl.filter(t=>t.mes===k&&t.meio!=="Rendimento"));
+    return {k,d,r,s:r-d,a};
+  });
+  const maxD = Math.max(1,...linhas.map(x=>x.d));
+  const cats = agCat(lc);
+  const prevMap = {}; agCat(lp).forEach(({cat,val})=>{prevMap[cat]=val;});
+  const zeraram = Object.keys(prevMap).filter(k=>!cats.some(x=>x.cat===k)).sort((a,b)=>prevMap[b]-prevMap[a]).map(cat=>({cat,val:0,cor:CAT_CORES[cat]||"#999"}));
+  const linhasCat=[...cats,...zeraram];
+  const rotAnt = len===1?"mês anterior":"período anterior";
+  const variacao=(cat,val)=>{
+    if(!temAnt) return null;
+    const ant=prevMap[cat]||0;
+    if(ant===0) return val>0?{txt:`novo — sem lançamento no ${rotAnt}`,cor:"#A6822E"}:null;
+    if(val===ant) return {txt:`= igual ao ${rotAnt}`,cor:"#A39C8A"};
+    const d=((val-ant)/ant)*100, subiu=d>0;
+    return {txt:`${subiu?"▲ +":"▼ "}${d.toFixed(1)}% vs ${rotAnt} · ant. ${fmt(ant)}`,cor:subiu?"#B4483C":"#2E6E5E"};
+  };
+  const pc=(a,b)=>b>0?((a/b)*100).toFixed(1):"0.0";
+  const vazio = total===0 && receita===0 && aportes===0 && agend.length===0;
+  const kpis = [
+    {l:"Despesa",v:fmt(total),sub:`${lc.length} lançamentos${len>1?` · média ${fmt(total/decorridos)}/mês`:""}`,cor:"#173C33"},
+    {l:`vs ${rotAnt}`,v:diff!=null?`${diff>0?"+":""}${diff.toFixed(1)}%`:"—",sub:diff!=null?(diff<0?"↓ reduziu":"↑ aumentou"):"sem comparativo",cor:diff!=null?(diff<0?"#2E6E5E":"#B4483C"):"#A39C8A"},
+    {l:"Receita",v:fmt(receita),sub:`${dados.cur.r.length} entrada(s)`,cor:"#2E6E5E"},
+    {l:"Saldo (receita − despesa)",v:fmt(saldo),sub:saldo>=0?"positivo":"negativo",cor:saldo>=0?"#173C33":"#B4483C"},
+    {l:"Aplicado no período",v:fmt(aportes),sub:rend>0?`+ ${fmt(rend)} de rendimento`:"sem rendimento",cor:"#235448"},
+    {l:"A executar (programado)",v:fmt(somaV(agend)),sub:`${agend.length} conta(s)`,cor:"#8A6A1F"},
+  ];
+  return (
+    <>
+      {header}
+      {vazio
+        ?<div style={{...card,padding:24,textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>📭</div><div style={{color:"#A39C8A",fontSize:14,fontWeight:700}}>Nenhum lançamento neste período.</div></div>
+        :<>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:6}}>
+            {kpis.map((k,i)=>(
+              <div key={i} style={{background:"#fff",borderRadius:14,padding:"14px",boxShadow:"0 2px 8px #173C3310"}}>
+                <div style={{fontSize:9,color:"#A39C8A",letterSpacing:"0.1em",textTransform:"uppercase",fontWeight:700,marginBottom:5,lineHeight:1.3}}>{k.l}</div>
+                <div style={{fontSize:k.v.length>12?15:17,fontWeight:800,color:k.cor,fontFamily:"'Fraunces',serif",lineHeight:1.1}}>{k.v}</div>
+                <div style={{fontSize:10,color:"#A39C8A",marginTop:5,fontWeight:600,lineHeight:1.3}}>{k.sub}</div>
+              </div>
+            ))}
+          </div>
+          {len>1&&<Sec k="pan" titulo="Panorama mês a mês">
+            <div style={{...card,padding:"8px 16px 12px"}}>
+              {linhas.map((x,i)=>(
+                <div key={x.k} style={{padding:"10px 0",borderBottom:i<linhas.length-1?"1px solid #F0EEE6":"none",opacity:x.k>mesHoje&&x.d===0&&x.r===0?0.45:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:5}}>
+                    <span style={{fontSize:13,fontWeight:x.k===mesKey?800:700,color:"#173C33"}}>{MESES_NOMES_FULL[parseInt(x.k.slice(5),10)-1]}{x.k===mesKey?" ·":""}{x.k===mesKey&&<span style={{fontSize:10,color:"#A39C8A",fontWeight:600}}> selecionado</span>}</span>
+                    <span style={{fontSize:13,fontWeight:800,color:"#173C33"}}>{fmt(x.d)}</span>
+                  </div>
+                  <Bar percent={(x.d/maxD)*100} color={x.k===mesKey?"#2E6E5E":"#9DBFB4"}/>
+                  <div style={{display:"flex",justifyContent:"space-between",marginTop:5,fontSize:10,fontWeight:600}}>
+                    <span style={{color:"#2E6E5E"}}>Receita {fmt(x.r)}</span>
+                    <span style={{color:x.s>=0?"#173C33":"#B4483C"}}>Saldo {fmt(x.s)}</span>
+                    <span style={{color:"#235448"}}>Aplic. {fmt(x.a)}</span>
+                  </div>
+                </div>
+              ))}
+              <div style={{display:"flex",justifyContent:"space-between",paddingTop:10,borderTop:"2px solid #E3DFD3",marginTop:2,fontSize:12,fontWeight:800,color:"#173C33"}}>
+                <span>Total do período</span><span>{fmt(total)}</span>
+              </div>
+            </div>
+          </Sec>}
+          <Sec k="dist" titulo="Distribuição por categoria">
+            <div style={{...card,padding:"18px 16px"}}>
+              {total===0
+                ?<div style={{textAlign:"center",color:"#A39C8A",fontSize:13,fontWeight:700}}>Sem despesas no período.</div>
+                :<>
+                  <div style={{display:"flex",justifyContent:"center",marginBottom:14}}>
+                    <div style={{position:"relative"}}>
+                      <Donut segs={cats}/>
+                      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
+                        <div style={{fontSize:8,color:"#A39C8A",fontWeight:700,textTransform:"uppercase"}}>total</div>
+                        <div style={{fontSize:fmt(total).length>12?8:9,fontWeight:800,color:"#173C33",fontFamily:"'Fraunces',serif",textAlign:"center",lineHeight:1.2,maxWidth:62}}>{fmt(total)}</div>
+                      </div>
+                    </div>
+                  </div>
+                  {linhasCat.map(({cat,val,cor},i)=>{
+                    const v=variacao(cat,val);
+                    return (
+                      <div key={cat} style={{padding:"10px 0",borderTop:i?"1px solid #F0EEE6":"none",opacity:val===0?0.7:1}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:5}}>
+                          <span style={{display:"flex",alignItems:"center",gap:7,minWidth:0}}>
+                            <span style={{width:8,height:8,borderRadius:2,background:cor,flexShrink:0}}/>
+                            <span style={{fontSize:13,fontWeight:700,color:"#173C33",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cat}</span>
+                          </span>
+                          <span style={{display:"flex",alignItems:"baseline",gap:8,flexShrink:0}}>
+                            <span style={{fontSize:13,fontWeight:800,color:"#173C33"}}>{fmt(val)}</span>
+                            <span style={{fontSize:11,fontWeight:800,color:cor,minWidth:44,textAlign:"right"}}>{pc(val,total)}%</span>
+                          </span>
+                        </div>
+                        <Bar percent={total>0?(val/total)*100:0} color={cor}/>
+                        {v&&<div style={{fontSize:10,fontWeight:700,color:v.cor,marginTop:5}}>{v.txt}</div>}
+                      </div>
+                    );
+                  })}
+                </>}
+            </div>
+          </Sec>
+          <Sec k="det" titulo="Detalhamento por categoria">
+            {cats.length===0
+              ?<div style={{...card,padding:20,textAlign:"center",color:"#A39C8A",fontSize:13,fontWeight:700}}>Sem lançamentos.</div>
+              :cats.map(({cat,val,cor})=>{
+                const itens=lc.filter(l=>l.categoria===cat).sort((a,b)=>b.data.localeCompare(a.data));
+                const open=!!catAb[cat];
+                return (
+                  <div key={cat} style={{...card,padding:0,overflow:"hidden",marginBottom:8}}>
+                    <div onClick={()=>setCatAb(p=>({...p,[cat]:!p[cat]}))} style={{padding:"12px 16px",cursor:"pointer",display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{width:4,alignSelf:"stretch",background:cor,borderRadius:2}}/>
+                      <div style={{flex:1}}>
+                        <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+                          <span style={{fontSize:13,fontWeight:700,color:"#173C33"}}>{cat}</span>
+                          <span style={{fontSize:13,fontWeight:800,color:"#173C33"}}>{fmt(val)}</span>
+                        </div>
+                        <Bar percent={total>0?(val/total)*100:0} color={cor}/>
+                        <div style={{display:"flex",justifyContent:"space-between",marginTop:4,fontSize:10,color:"#A39C8A",fontWeight:600}}>
+                          <span>{itens.length} item(ns)</span><span>{pc(val,total)}%</span>
+                        </div>
+                      </div>
+                      <span style={{color:"#A39C8A",fontSize:12,transition:"transform .2s",transform:open?"rotate(180deg)":"none"}}>▾</span>
+                    </div>
+                    {open&&(
+                      <div style={{borderTop:"1px solid #F0EEE6",background:"#FAF9F6"}}>
+                        {itens.map((it,i)=>(
+                          <div key={it.id} style={{padding:"10px 16px 10px 30px",borderBottom:i<itens.length-1?"1px solid #F0EEE6":"none",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+                            <div style={{minWidth:0,flex:1}}>
+                              <div style={{fontSize:12,fontWeight:600,color:"#173C33",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{it.descricao}</div>
+                              <div style={{fontSize:10,color:"#A39C8A",marginTop:2}}>{fmtDate(it.data)} · {it.meio}</div>
+                              {it.obs&&<div style={{fontSize:10,color:"#A39C8A",fontStyle:"italic",marginTop:1}}>{it.obs}</div>}
+                            </div>
+                            <div style={{fontSize:13,fontWeight:800,color:"#173C33",flexShrink:0}}>{fmt(it.valor)}</div>
+                          </div>
+                        ))}
+                        <div style={{padding:"9px 16px 9px 30px",background:`${cor}14`,display:"flex",justifyContent:"space-between"}}>
+                          <span style={{fontSize:11,fontWeight:800,color:"#173C33",letterSpacing:"0.06em",textTransform:"uppercase"}}>Subtotal</span>
+                          <span style={{fontSize:13,fontWeight:800,color:"#173C33"}}>{fmt(val)}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </Sec>
+        </>}
+    </>
+  );
+}
+
 const INIT_STATE = Object.fromEntries(MESES.map(m=>[m.mes,[]]));
 const INIT_RECEITAS = Object.fromEntries(MESES.map(m=>[m.mes,[]]));
 
@@ -699,7 +953,7 @@ export default function App() {
   );
 
   return (
-    <div style={{fontFamily:"'Inter',sans-serif",background:"#F4F2ED",minHeight:"100vh",color:"#173C33",maxWidth:480,margin:"0 auto"}}>
+    <div style={{fontFamily:"'Inter',sans-serif",background:"#F4F2ED",minHeight:"100vh",color:"#173C33",margin:"0 auto"}} className="app-wrap">
       <style>{CSS}</style>
       <div style={{background:"#fff",borderBottom:"1px solid #E3DFD3",padding:"12px 20px 0",position:"sticky",top:0,zIndex:50,boxShadow:"0 2px 12px #173C3310"}}>
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
@@ -736,10 +990,10 @@ export default function App() {
             {!isFechado&&items.length>0&&<span className="badge" style={{background:"#FBF3E4",color:"#A6822E",border:"1px solid #EAD9AE"}}>Parcial</span>}
           </div>
         </div>
-        <nav style={{display:"flex",marginTop:2}}>
-          {[["caixa","Caixa"],["inicio","Despesa"],["aplicado","Aplicado"],["categorias","Categorias"],["historico","Histórico"]].map(([v,l])=>(
+        <nav className="navtabs" style={{display:"flex",marginTop:2,overflowX:"auto"}}>
+          {[["caixa","Caixa"],["inicio","Despesa"],["aplicado","Aplicado"],["categorias","Categorias"],["historico","Histórico"],["relatorio","Relatório"]].map(([v,l])=>(
             <button key={v} className="tab" onClick={()=>setView(v)}
-              style={{flex:1,background:"none",border:"none",borderBottom:view===v?"2.5px solid #2E6E5E":"2.5px solid transparent",color:view===v?"#2E6E5E":"#A39C8A",padding:"10px 2px",fontSize:10.5,letterSpacing:"0.04em",textTransform:"uppercase",cursor:"pointer",fontFamily:"'Inter',sans-serif",fontWeight:800,transition:"all .2s"}}>
+              style={{flex:"1 0 auto",whiteSpace:"nowrap",background:"none",border:"none",borderBottom:view===v?"2.5px solid #2E6E5E":"2.5px solid transparent",color:view===v?"#2E6E5E":"#A39C8A",padding:"10px 5px",fontSize:10,letterSpacing:"0.02em",textTransform:"uppercase",cursor:"pointer",fontFamily:"'Inter',sans-serif",fontWeight:800,transition:"all .2s"}}>
               {l}
             </button>
           ))}
@@ -931,6 +1185,7 @@ export default function App() {
             }
           </>
         )}
+        {view==="relatorio"&&<Relatorio mesKey={mesAtual.mes} aplicadoTodos={aplicadoTodos} goPeriodo={n=>setMesIdx(i=>Math.max(0,Math.min(MESES.length-1,i+n)))}/>}
         {view==="historico"&&(
           <>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
@@ -969,7 +1224,7 @@ export default function App() {
         )}
       </div>
 
-      {!anyModal&&!isFechado&&view!=="caixa"&&(
+      {!anyModal&&!isFechado&&view!=="caixa"&&view!=="relatorio"&&(
         <button className="fab" onClick={()=>{setProgMode(false);setForm(emptyForm());setErro({});setShowForm(true);}}>
           <span style={{fontSize:20,lineHeight:1}}>+</span> Novo Lançamento
         </button>
