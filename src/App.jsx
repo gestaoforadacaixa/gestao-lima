@@ -882,7 +882,7 @@ export default function App() {
               {aplicadoOrd.length===0
                 ?<div style={{padding:"24px 0",textAlign:"center"}}><div style={{fontSize:32,marginBottom:8}}>🌱</div><div style={{color:"#A39C8A",fontSize:14,fontFamily:"'Inter',sans-serif",fontWeight:700}}>Nenhuma aplicação registrada ainda.</div><div style={{color:"#A39C8A",fontSize:12,marginTop:4,fontFamily:"'Inter',sans-serif"}}>Lance uma despesa com categoria "Aplicado" pra começar a somar aqui.</div></div>
                 :aplicadoOrd.map((t,i)=>(
-                  <div key={t.id} style={rowDiv(i===aplicadoOrd.length-1)}>
+                  <div key={t.id} className="row-item" style={!isFechado?{...rowDiv(i===aplicadoOrd.length-1),userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none"}:rowDiv(i===aplicadoOrd.length-1)} {...(!isFechado?lpProps("lanc",t):{})}>
                     <div style={{display:"flex",gap:10,alignItems:"center",flex:1,minWidth:0}}>
                       <div style={{width:4,height:40,background:"#2E6E5E",borderRadius:3,flexShrink:0}}/>
                       <div style={{minWidth:0}}>
@@ -1099,7 +1099,7 @@ export default function App() {
                   </div>
                   <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
                     <span style={{fontSize:13,fontWeight:800,color:"#173C33",fontFamily:"'Inter',sans-serif"}}>{fmt(t.valor)}</span>
-                    {!isFechado&&<button onClick={()=>provisionar(t)} style={{background:"none",border:"1px solid #BFDCD1",color:"#2E6E5E",borderRadius:8,fontSize:10.5,fontWeight:700,padding:"4px 8px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>provisionar</button>}
+                    {!isFechado&&<button onClick={()=>provisionar(t)} style={{background:"none",border:"1px solid #BFDCD1",color:"#2E6E5E",borderRadius:8,fontSize:10.5,fontWeight:700,padding:"4px 8px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>executar</button>}
                   </div>
                 </div>
               ))
