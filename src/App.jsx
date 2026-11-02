@@ -380,6 +380,7 @@ function FormBodyReceita({form,setForm,erro,setErro}) {
   );
 }
 // ─── RELATÓRIO (Dashboard + Relatório do Painel do Mentor, com visão por período) ──
+const MES_AB = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PERIODOS = [["mes","Mês",1],["tri","Trimestre",3],["sem","Semestre",6],["ano","Ano",12]];
 const mAdd = (key, n) => { const [y,m]=key.split("-").map(Number); const t=y*12+(m-1)+n; return `${Math.floor(t/12)}-${String(t%12+1).padStart(2,"0")}`; };
 function rangeDe(tipo, mesKey) {
@@ -666,6 +667,8 @@ export default function App() {
   const abertoEm = useRef(0);
   const pressTimer = useRef(null);
   const [fluxoAberto,setFluxoAberto]       = useState(false);
+  const [evoAberto,setEvoAberto]           = useState(false);
+  const [rendAberto,setRendAberto]       = useState(false);
   const [motivoExc,setMotivoExc]           = useState("");
   const [motivoErr,setMotivoErr]           = useState(false);
   const [form,setForm]                     = useState(emptyForm());
@@ -688,7 +691,8 @@ export default function App() {
       rcGet(mesAtual.mes),
       fetchAplicadoAll(),
     ]);
-    setAllItems(p => ({...p, [mesAtual.mes]: dAtual||[], ...(mesAnt ? {[mesAnt.mes]: dAnt||[]} : {})}));
+    const semRend = a => (a||[]).filter(t=>t.meio!=="Rendimento");   // rendimento NUNCA é despesa: só aparece na aba Aplicado
+    setAllItems(p => ({...p, [mesAtual.mes]: semRend(dAtual), ...(mesAnt ? {[mesAnt.mes]: semRend(dAnt)} : {})}));
     setAllReceitas(p => ({...p, [mesAtual.mes]: rAtual||[]}));
     setAplicadoTodos(aplicAll||[]);
     setLastSync(new Date());
@@ -745,6 +749,39 @@ export default function App() {
     const mensal=a>0?Math.pow(1+a/100,1/12)-1:0;
     return {a,base,mensal,valor:Math.round(base*mensal*100)/100};
   };
+  const carteira = useMemo(()=>{
+    const soma=a=>a.reduce((s,t)=>s+t.valor,0);
+    const regs=aplicadoTodos.filter(t=>t.meio==="Rendimento");
+    const aportes=soma(aplicadoTodos.filter(t=>t.meio!=="Rendimento")), rend=soma(regs);
+    const porMes={};
+    [...regs].sort((a,b)=>a.data.localeCompare(b.data)).forEach(r=>{
+      if(!porMes[r.mes]){
+        const base=soma(aplicadoTodos.filter(t=>t.data<=r.data && !(t.meio==="Rendimento"&&t.mes===r.mes)));
+        porMes[r.mes]={valor:0,base};
+      }
+      porMes[r.mes].valor+=r.valor;
+    });
+    const ms=Object.keys(porMes).sort();
+    const dif=(a,b)=>(parseInt(b.slice(0,4),10)-parseInt(a.slice(0,4),10))*12+(parseInt(b.slice(5),10)-parseInt(a.slice(5),10));
+    let fator=1; const fatorAno={};
+    ms.forEach(m=>{ if(porMes[m].base>0){ const f=1+porMes[m].valor/porMes[m].base; fator*=f; const y=m.slice(0,4); fatorAno[y]=(fatorAno[y]||1)*f; } });
+    const n=ms.length?dif(ms[0],ms[ms.length-1])+1:0;
+    const acum=(fator-1)*100;
+    const aa=n>0?(Math.pow(fator,12/n)-1)*100:null;
+    const todos=aplicadoTodos.map(t=>t.mes).sort();
+    const meses=[]; if(todos.length){ let k=todos[0]; const fimK=todos[todos.length-1]; while(k<=fimK){ meses.push(k); k=mAdd(k,1);} }
+    let ca=0, cr=0;
+    const evo=meses.map(k=>{
+      const a=soma(aplicadoTodos.filter(t=>t.mes===k&&t.meio!=="Rendimento")), r=soma(aplicadoTodos.filter(t=>t.mes===k&&t.meio==="Rendimento"));
+      ca+=a; cr+=r; return {k,a,r,ca,cr,tot:ca+cr};
+    });
+    const anos=[...new Set(meses.map(k=>k.slice(0,4)))].map(y=>({
+      y, a:soma(aplicadoTodos.filter(t=>t.mes.startsWith(y)&&t.meio!=="Rendimento")), r:soma(aplicadoTodos.filter(t=>t.mes.startsWith(y)&&t.meio==="Rendimento")),
+      pct:fatorAno[y]?(fatorAno[y]-1)*100:null,
+    }));
+    return {aportes,rend,total:aportes+rend,n,acum,aa,desde:ms[0]||null,evo,anos,
+      nAp:aplicadoTodos.filter(t=>t.meio!=="Rendimento").length,nRe:regs.length,temRend:regs.length>0&&n>0};
+  },[aplicadoTodos]);
   const aplicadoOrd = useMemo(()=>[...aplicadoTodos].sort((a,b)=>new Date(b.data)-new Date(a.data)),[aplicadoTodos]);
   const byCat      = useMemo(()=>{
     const m={};
@@ -1133,21 +1170,74 @@ export default function App() {
         {view==="aplicado"&&(
           <>
             <div style={{background:"linear-gradient(135deg,#173C33,#2E6E5E)",borderRadius:16,padding:"26px 22px",marginBottom:14,boxShadow:"0 4px 20px #173C3325"}}>
-              <div style={{fontSize:11,letterSpacing:"0.15em",color:"#C9A566",textTransform:"uppercase",marginBottom:6,fontWeight:700}}>Montante Aplicado (acumulado)</div>
+              <div style={{fontSize:11,letterSpacing:"0.15em",color:"#C9A566",textTransform:"uppercase",marginBottom:6,fontWeight:700}}>Montante Aplicado</div>
               <div style={{fontSize:36,fontWeight:800,color:"#F4F2ED",lineHeight:1,fontFamily:"'Fraunces',serif"}}>{fmt(totalAplicadoGeral)}</div>
-              <div style={{fontSize:11,color:"#C9A566",marginTop:8,fontWeight:600}}>{aplicadoTodos.length} lançamento{aplicadoTodos.length===1?"":"s"} · soma de todos os meses</div>
+              <div style={{fontSize:11,color:"#C9A566",marginTop:8,fontWeight:600}}>{carteira.nAp} aporte{carteira.nAp===1?"":"s"} · {carteira.nRe} rendimento{carteira.nRe===1?"":"s"}</div>
+              <div style={{background:"#FFFFFF14",borderRadius:10,padding:"10px 12px",marginTop:16,display:"flex",justifyContent:"space-between",alignItems:"baseline"}}>
+                <span style={{fontSize:9,letterSpacing:"0.1em",color:"#C9A566",textTransform:"uppercase",fontWeight:700}}>Seu dinheiro</span>
+                <span style={{fontSize:15,color:"#F4F2ED",fontWeight:800,fontFamily:"'Inter',sans-serif"}}>{fmt(carteira.aportes)}</span>
+              </div>
               <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid #FFFFFF22"}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
-                  <div style={{minWidth:0}}>
-                    <div style={{fontSize:10,letterSpacing:"0.12em",color:"#C9A566",textTransform:"uppercase",fontWeight:700}}>Rendimento CDB · {MESES_NOMES_FULL[parseInt(mesAtual.mes.slice(5,7),10)-1]}</div>
-                    <div style={{fontSize:15,color:"#F4F2ED",fontWeight:800,marginTop:4,fontFamily:"'Inter',sans-serif"}}>{rendInfo.tem?`+ ${fmt(rendInfo.rend)}`:"Sem rendimento registrado"}</div>
-                    {rendInfo.tem&&rendInfo.base>0&&<div style={{fontSize:10.5,color:"#C9A566",marginTop:3,fontWeight:600}}>≈ {rendInfo.pct.toFixed(2).replace(".",",")}% a.m. sobre o montante</div>}
-                  </div>
-                  {rendInfo.tem&&rendInfo.aa!=null&&<div style={{background:"#C9A566",color:"#173C33",borderRadius:20,padding:"6px 12px",fontSize:13,fontWeight:800,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>{rendInfo.aa.toFixed(2).replace(".",",")}% a.a.</div>}
+                  <div style={{fontSize:10,letterSpacing:"0.12em",color:"#C9A566",textTransform:"uppercase",fontWeight:700}}>Rentabilidade da carteira</div>
+                  <button onClick={()=>setRendAberto(v=>!v)} style={{background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:10,fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",padding:"5px 10px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{rendAberto?"Minimizar":"Expandir"}</button>
                 </div>
-                {!isFechado&&<button onClick={()=>{setFormRend({taxa:"",data:hoje()});setErroRend(null);setShowRend(true);}} style={{marginTop:12,background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{rendInfo.tem?"+ Outro rendimento":"+ Registrar rendimento do mês"}</button>}
+                {carteira.temRend
+                  ?<>
+                    <div style={{fontSize:28,color:"#F4F2ED",fontWeight:800,marginTop:4,fontFamily:"'Fraunces',serif",lineHeight:1.1}}>{carteira.aa.toFixed(2).replace(".",",")}% <span style={{fontSize:13,color:"#C9A566",fontFamily:"'Inter',sans-serif",fontWeight:700}}>ao ano</span></div>
+                    <div style={{fontSize:11,color:"#C9A566",marginTop:4,fontWeight:600}}>acumulado {carteira.acum>=0?"+":""}{carteira.acum.toFixed(2).replace(".",",")}% em {carteira.n} {carteira.n===1?"mês":"meses"} · desde {MES_AB[parseInt(carteira.desde.slice(5),10)-1]}/{carteira.desde.slice(2,4)}</div>
+                    <div style={{fontSize:11,color:"#F4F2ED",marginTop:3,fontWeight:600}}>Rendeu sozinho + {fmt(carteira.rend)} <span style={{color:"#C9A566",fontWeight:500}}>(já incluso no total)</span></div>
+                  </>
+                  :<div style={{fontSize:12,color:"#F4F2ED",marginTop:6,fontWeight:600,lineHeight:1.4}}>Registre o rendimento para acompanhar quanto a carteira cresce sozinha.</div>}
+                {rendAberto&&(
+                  <div style={{marginTop:12,borderTop:"1px solid #FFFFFF22",paddingTop:6}}>
+                    <div style={{fontSize:9,letterSpacing:"0.1em",color:"#C9A566",textTransform:"uppercase",fontWeight:700,margin:"4px 0 2px"}}>Rendimentos cadastrados</div>
+                    {aplicadoOrd.filter(t=>t.meio==="Rendimento").length===0
+                      ?<div style={{fontSize:12,color:"#F4F2ED",padding:"8px 0",fontWeight:600}}>Nenhum rendimento cadastrado.</div>
+                      :aplicadoOrd.filter(t=>t.meio==="Rendimento").map((t,i,arr)=>(
+                        <div key={t.id} className="row-item" {...(!isFechado?lpProps("lanc",t):{})} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<arr.length-1?"1px solid #FFFFFF18":"none",userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none"}}>
+                          <div style={{minWidth:0}}>
+                            <div style={{fontSize:12,color:"#F4F2ED",fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{fmtDate(t.data)} · {MESES_NOMES_FULL[parseInt(t.mes.slice(5,7),10)-1]}</div>
+                            {t.obs&&<div style={{fontSize:10,color:"#C9A566",marginTop:2,fontWeight:600}}>{t.obs}</div>}
+                          </div>
+                          <div style={{fontSize:13,color:"#F4F2ED",fontWeight:800,fontFamily:"'Inter',sans-serif",flexShrink:0}}>+ {fmt(t.valor)}</div>
+                        </div>
+                      ))}
+                    {!isFechado&&<button onClick={()=>{setFormRend({taxa:"",data:hoje()});setErroRend(null);setShowRend(true);}} style={{marginTop:10,background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>+ Registrar rendimento</button>}
+                    {aplicadoOrd.some(t=>t.meio==="Rendimento")&&!isFechado&&<div style={{fontSize:9.5,color:"#C9A56699",marginTop:8}}>Clique com o botão direito (ou segure) num rendimento para editar ou excluir.</div>}
+                  </div>
+                )}
               </div>
             </div>
+            <div role="button" onClick={()=>setEvoAberto(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:10,fontWeight:700,cursor:"pointer",userSelect:"none"}}>
+              <span>Evolução da carteira</span>
+              <span style={{display:"inline-block",transform:evoAberto?"rotate(90deg)":"none",transition:"transform .15s",fontSize:9}}>▶</span>
+            </div>
+            {evoAberto&&<div style={{...card,padding:"12px 16px 14px"}}>
+              {carteira.anos.map(a=>(
+                <div key={a.y} style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"8px 0",borderBottom:"1px solid #F0EEE6",fontFamily:"'Inter',sans-serif"}}>
+                  <span style={{fontSize:13,fontWeight:800,color:"#173C33"}}>{a.y}</span>
+                  <span style={{fontSize:11,color:"#7A7466",fontWeight:600}}>aportado {fmt(a.a)} · rendeu <b style={{color:"#235448"}}>+ {fmt(a.r)}</b>{a.pct!=null?<b style={{color:"#8A6A1F"}}> · {a.pct.toFixed(2).replace(".",",")}% no ano</b>:null}</span>
+                </div>
+              ))}
+              {(()=>{const mx=Math.max(1,...carteira.evo.map(x=>x.tot)); return carteira.evo.map(x=>(
+                <div key={x.k} style={{padding:"10px 0 4px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,fontFamily:"'Inter',sans-serif",marginBottom:5}}>
+                    <span style={{fontWeight:700,color:"#173C33"}}>{MES_AB[parseInt(x.k.slice(5),10)-1]}/{x.k.slice(2,4)}</span>
+                    <span style={{fontWeight:800,color:"#173C33"}}>{fmt(x.tot)}</span>
+                  </div>
+                  <div style={{display:"flex",height:8,borderRadius:4,overflow:"hidden",background:"#E9E5D8",width:`${(x.tot/mx)*100}%`,minWidth:4}}>
+                    <div style={{flex:x.ca,background:"#2E6E5E"}}/>
+                    <div style={{flex:Math.max(x.cr,0),background:"#C9A566"}}/>
+                  </div>
+                  <div style={{fontSize:10,color:"#A39C8A",marginTop:3,fontWeight:600,fontFamily:"'Inter',sans-serif"}}>aportes {fmt(x.ca)} · rendimento acumulado {fmt(x.cr)}</div>
+                </div>
+              ));})()}
+              <div style={{display:"flex",gap:14,marginTop:10,fontSize:10,color:"#7A7466",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
+                <span><span style={{display:"inline-block",width:8,height:8,borderRadius:2,background:"#2E6E5E",marginRight:5}}/>seu dinheiro</span>
+                <span><span style={{display:"inline-block",width:8,height:8,borderRadius:2,background:"#C9A566",marginRight:5}}/>rendeu sozinho</span>
+              </div>
+            </div>}
             <div role="button" onClick={()=>setExtAberto(v=>!v)} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,color:"#A39C8A",letterSpacing:"0.2em",textTransform:"uppercase",marginBottom:10,fontWeight:700,cursor:"pointer",userSelect:"none"}}>
               <span>Extrato de Aplicações</span>
               <span style={{display:"inline-block",transform:extAberto?"rotate(90deg)":"none",transition:"transform .15s",fontSize:9}}>▶</span>
