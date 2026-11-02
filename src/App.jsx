@@ -380,6 +380,9 @@ function FormBodyReceita({form,setForm,erro,setErro}) {
   );
 }
 // ─── RELATÓRIO (Dashboard + Relatório do Painel do Mentor, com visão por período) ──
+const isRend = t => String(t.meio||"").startsWith("Rendimento");   // "Rendimento" (soma ao montante) ou "Rendimento incluso" (já está no montante)
+const isInc  = t => t.meio === "Rendimento incluso";
+const f2 = d => d.split("-").reverse().join("/");
 const MES_AB = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
 const PERIODOS = [["mes","Mês",1],["tri","Trimestre",3],["sem","Semestre",6],["ano","Ano",12]];
 const mAdd = (key, n) => { const [y,m]=key.split("-").map(Number); const t=y*12+(m-1)+n; return `${Math.floor(t/12)}-${String(t%12+1).padStart(2,"0")}`; };
@@ -477,12 +480,12 @@ function Relatorio({ mesKey, goPeriodo, aplicadoTodos }) {
   const diff = totAnt>0 ? ((total-totAnt)/totAnt)*100 : null;
   const receita=somaV(dados.cur.r), saldo=receita-total;
   const apl = aplicadoTodos.filter(t=>t.mes>=ini&&t.mes<=fim);
-  const aportes=somaV(apl.filter(t=>t.meio!=="Rendimento")), rend=somaV(apl.filter(t=>t.meio==="Rendimento"));
+  const aportes=somaV(apl.filter(t=>!isRend(t)))-somaV(apl.filter(isInc)), rend=somaV(apl.filter(isRend));
   const meses = Array.from({length:len},(_,i)=>mAdd(ini,i));
   const decorridos = Math.max(1, meses.filter(k=>k<=mesHoje).length);
   const linhas = meses.map(k=>{
     const d=somaV(lc.filter(l=>l.mes===k)), r=somaV(dados.cur.r.filter(x=>x.mes===k));
-    const a=somaV(apl.filter(t=>t.mes===k&&t.meio!=="Rendimento"));
+    const a=somaV(apl.filter(t=>t.mes===k&&!isRend(t)))-somaV(apl.filter(t=>t.mes===k&&isInc(t)));
     return {k,d,r,s:r-d,a};
   });
   const maxD = Math.max(1,...linhas.map(x=>x.d));
@@ -661,7 +664,7 @@ export default function App() {
   const [recAberto,setRecAberto]           = useState(false);
   const [extAberto,setExtAberto]           = useState(false);
   const [showRend,setShowRend]             = useState(false);
-  const [formRend,setFormRend]             = useState({taxa:"",data:hoje()});
+  const [formRend,setFormRend]             = useState({modo:"valor",valorDigits:"",taxa:"",data:hoje(),de:hoje(),ate:hoje()});
   const [erroRend,setErroRend]             = useState(null);
   const lastTouch = useRef(0);
   const abertoEm = useRef(0);
@@ -691,7 +694,7 @@ export default function App() {
       rcGet(mesAtual.mes),
       fetchAplicadoAll(),
     ]);
-    const semRend = a => (a||[]).filter(t=>t.meio!=="Rendimento");   // rendimento NUNCA é despesa: só aparece na aba Aplicado
+    const semRend = a => (a||[]).filter(t=>!isRend(t));   // rendimento NUNCA é despesa: só aparece na aba Aplicado
     setAllItems(p => ({...p, [mesAtual.mes]: semRend(dAtual), ...(mesAnt ? {[mesAnt.mes]: semRend(dAnt)} : {})}));
     setAllReceitas(p => ({...p, [mesAtual.mes]: rAtual||[]}));
     setAplicadoTodos(aplicAll||[]);
@@ -728,7 +731,7 @@ export default function App() {
   const totalAnt   = useMemo(()=>soma(itemsAnt.filter(t=>parseInt(t.data.slice(8,10))<=maxDia)),[itemsAnt,maxDia]);
   const sorted     = useMemo(()=>[...items].sort((a,b)=>new Date(b.data)-new Date(a.data)),[items]);
   const sortedReceitas = useMemo(()=>[...receitas].sort((a,b)=>new Date(b.semana)-new Date(a.semana)),[receitas]);
-  const totalAplicadoGeral = useMemo(()=>aplicadoTodos.reduce((s,t)=>s+t.valor,0),[aplicadoTodos]);
+  const totalAplicadoGeral = useMemo(()=>aplicadoTodos.filter(t=>!isInc(t)).reduce((s,t)=>s+t.valor,0),[aplicadoTodos]);
   const rendInfo = useMemo(()=>{
     const m=mesAtual.mes;
     const rend=aplicadoTodos.filter(t=>t.meio==="Rendimento"&&t.mes===m).reduce((s,t)=>s+t.valor,0);
@@ -745,43 +748,85 @@ export default function App() {
   const taxaNum = v => { const n=parseFloat(String(v).replace(",",".")); return isFinite(n)?n:0; };
   const calcRend = (taxaStr,dataStr) => {
     const a=taxaNum(taxaStr);
-    const base=aplicadoTodos.filter(t=>t.data<=dataStr && !(t.meio==="Rendimento"&&t.mes===dataStr.slice(0,7))).reduce((s,t)=>s+t.valor,0);
+    const base=aplicadoTodos.filter(t=>!isInc(t) && t.data<=dataStr && !(t.meio==="Rendimento"&&t.mes===dataStr.slice(0,7))).reduce((s,t)=>s+t.valor,0);
     const mensal=a>0?Math.pow(1+a/100,1/12)-1:0;
     return {a,base,mensal,valor:Math.round(base*mensal*100)/100};
   };
   const carteira = useMemo(()=>{
     const soma=a=>a.reduce((s,t)=>s+t.valor,0);
-    const regs=aplicadoTodos.filter(t=>t.meio==="Rendimento");
-    const aportes=soma(aplicadoTodos.filter(t=>t.meio!=="Rendimento")), rend=soma(regs);
+    const regs=aplicadoTodos.filter(isRend);
+    const principal=aplicadoTodos.filter(t=>!isRend(t));
+    const rendTop=soma(aplicadoTodos.filter(t=>t.meio==="Rendimento")), rendInc=soma(aplicadoTodos.filter(isInc));
+    const aportes=soma(principal)-rendInc, rend=rendTop+rendInc, total=soma(principal)+rendTop;
     const porMes={};
     [...regs].sort((a,b)=>a.data.localeCompare(b.data)).forEach(r=>{
       if(!porMes[r.mes]){
-        const base=soma(aplicadoTodos.filter(t=>t.data<=r.data && !(t.meio==="Rendimento"&&t.mes===r.mes)));
-        porMes[r.mes]={valor:0,base};
+        const base=soma(aplicadoTodos.filter(t=>!isInc(t) && t.data<=r.data && !(t.meio==="Rendimento"&&t.mes===r.mes)));
+        porMes[r.mes]={valor:0,base,dias:0};
       }
       porMes[r.mes].valor+=r.valor;
+      if(isInc(r)){
+        const mt=(r.obs||"").match(/(\d{2})\/(\d{2})\/(\d{4})–(\d{2})\/(\d{2})\/(\d{4})/);
+        const d=mt?Math.round((new Date(+mt[6],+mt[5]-1,+mt[4])-new Date(+mt[3],+mt[2]-1,+mt[1]))/86400000)+1:30.4375;
+        porMes[r.mes].dias+=d;
+      }
     });
     const ms=Object.keys(porMes).sort();
-    const dif=(a,b)=>(parseInt(b.slice(0,4),10)-parseInt(a.slice(0,4),10))*12+(parseInt(b.slice(5),10)-parseInt(a.slice(5),10));
-    let fator=1; const fatorAno={};
-    ms.forEach(m=>{ if(porMes[m].base>0){ const f=1+porMes[m].valor/porMes[m].base; fator*=f; const y=m.slice(0,4); fatorAno[y]=(fatorAno[y]||1)*f; } });
-    const n=ms.length?dif(ms[0],ms[ms.length-1])+1:0;
+    let fator=1, expo=0; const fatorAno={};
+    ms.forEach(m=>{
+      const x=porMes[m];
+      expo+=x.dias>0?x.dias/30.4375:1;
+      if(x.base>0){ const f=1+x.valor/x.base; fator*=f; const y=m.slice(0,4); fatorAno[y]=(fatorAno[y]||1)*f; }
+    });
+    const n=ms.length?Math.max(expo,0.01):0;
     const acum=(fator-1)*100;
     const aa=n>0?(Math.pow(fator,12/n)-1)*100:null;
     const todos=aplicadoTodos.map(t=>t.mes).sort();
     const meses=[]; if(todos.length){ let k=todos[0]; const fimK=todos[todos.length-1]; while(k<=fimK){ meses.push(k); k=mAdd(k,1);} }
     let ca=0, cr=0;
     const evo=meses.map(k=>{
-      const a=soma(aplicadoTodos.filter(t=>t.mes===k&&t.meio!=="Rendimento")), r=soma(aplicadoTodos.filter(t=>t.mes===k&&t.meio==="Rendimento"));
+      const dm=aplicadoTodos.filter(t=>t.mes===k);
+      const a=soma(dm.filter(t=>!isRend(t)))-soma(dm.filter(isInc)), r=soma(dm.filter(isRend));
       ca+=a; cr+=r; return {k,a,r,ca,cr,tot:ca+cr};
     });
-    const anos=[...new Set(meses.map(k=>k.slice(0,4)))].map(y=>({
-      y, a:soma(aplicadoTodos.filter(t=>t.mes.startsWith(y)&&t.meio!=="Rendimento")), r:soma(aplicadoTodos.filter(t=>t.mes.startsWith(y)&&t.meio==="Rendimento")),
-      pct:fatorAno[y]?(fatorAno[y]-1)*100:null,
-    }));
-    return {aportes,rend,total:aportes+rend,n,acum,aa,desde:ms[0]||null,evo,anos,
-      nAp:aplicadoTodos.filter(t=>t.meio!=="Rendimento").length,nRe:regs.length,temRend:regs.length>0&&n>0};
+    const anos=[...new Set(meses.map(k=>k.slice(0,4)))].map(y=>{
+      const dy=aplicadoTodos.filter(t=>t.mes.startsWith(y));
+      return {y, a:soma(dy.filter(t=>!isRend(t)))-soma(dy.filter(isInc)), r:soma(dy.filter(isRend)), pct:fatorAno[y]?(fatorAno[y]-1)*100:null};
+    });
+    return {aportes,rend,total,n,acum,aa,desde:ms[0]||null,evo,anos,
+      nAp:principal.length,nRe:regs.length,temRend:regs.length>0&&n>0};
   },[aplicadoTodos]);
+  const novoFormRend = () => {
+    const prim=aplicadoTodos.filter(t=>!isRend(t)).map(t=>t.data).sort()[0];
+    return {modo:"valor",valorDigits:"",taxa:"",data:hoje(),de:prim||hoje().slice(0,8)+"01",ate:hoje()};
+  };
+  // Distribui um rendimento total (já incluso no montante) mês a mês, com taxa mensal constante
+  const distribuir = (V,de,ate) => {
+    if(!(V>0)) return {ok:false,err:"Informe o valor que rendeu"};
+    if(!de||!ate||de>ate) return {ok:false,err:"Período inválido (confira as datas)"};
+    const pad=n=>String(n).padStart(2,"0");
+    const segs=[]; let k=de.slice(0,7); const kEnd=ate.slice(0,7);
+    while(k<=kEnd){
+      const [y,m]=k.split("-").map(Number); const dim=new Date(y,m,0).getDate();
+      const d1=k===de.slice(0,7)?parseInt(de.slice(8,10),10):1, d2=k===kEnd?parseInt(ate.slice(8,10),10):dim;
+      const fim=`${k}-${pad(d2)}`;
+      const base=aplicadoTodos.filter(t=>!isRend(t)&&t.data<=fim).reduce((s,t)=>s+t.valor,0);
+      segs.push({k,ini:`${k}-${pad(d1)}`,fim,frac:(d2-d1+1)/dim,base});
+      k=mAdd(k,1);
+    }
+    const f=r=>segs.reduce((s,x)=>s+x.base*(Math.pow(1+r,x.frac)-1),0);
+    if(!segs.some(x=>x.base>0)) return {ok:false,err:"Não há aplicação registrada nesse período"};
+    if(f(1)<V) return {ok:false,err:"Valor alto demais para o montante do período"};
+    let lo=0,hi=1; for(let it=0;it<80;it++){ const mid=(lo+hi)/2; if(f(mid)<V) lo=mid; else hi=mid; }
+    const r=(lo+hi)/2;
+    segs.forEach(x=>{ x.valor=Math.round(x.base*(Math.pow(1+r,x.frac)-1)*100)/100; });
+    const comValor=segs.filter(x=>x.valor>0);
+    if(!comValor.length) return {ok:false,err:"Rendimento calculado é zero"};
+    const dif=Math.round((V-comValor.reduce((s,x)=>s+x.valor,0))*100)/100;
+    comValor[comValor.length-1].valor=Math.round((comValor[comValor.length-1].valor+dif)*100)/100;
+    const meses=segs.reduce((s,x)=>s+x.frac,0);
+    return {ok:true,r,segs:comValor,aa:(Math.pow(1+r,12)-1)*100,meses};
+  };
   const aplicadoOrd = useMemo(()=>[...aplicadoTodos].sort((a,b)=>new Date(b.data)-new Date(a.data)),[aplicadoTodos]);
   const byCat      = useMemo(()=>{
     const m={};
@@ -901,6 +946,26 @@ export default function App() {
     setForm({...emptyForm(),data:amanha()});setErro({});setShowForm(true);
   };
   const salvarRendimento=async ()=>{
+    if(formRend.modo==="valor"){
+      const V=d2float(formRend.valorDigits||"0");
+      const d=distribuir(V,formRend.de,formRend.ate);
+      if(!d.ok){setErroRend(d.err);return;}
+      const pctm=((Math.pow(1+d.r,1)-1)*100).toFixed(2).replace(".",",");
+      const novos=d.segs.map(x=>({
+        id: uid(), cliente_id: CID, mes: x.k, centro: "empresa", categoria: "Aplicado", descricao: "Rendimento CDB",
+        valor: x.valor, meio: "Rendimento incluso", data: x.fim,
+        obs: `Distribuído: ${pctm}% a.m. sobre ${fmt(x.base)} · ${f2(x.ini)}–${f2(x.fim)}`,
+        excluido: false, recorrente: false, motivo_exclusao: "",
+      }));
+      const meses=new Set(novos.map(x=>x.mes));
+      const antigos=aplicadoTodos.filter(t=>isInc(t)&&meses.has(t.mes));
+      const res=await Promise.all(novos.map(x=>sbPost(x)));
+      if(res.some(r=>!r)){setErroRend("Falha ao salvar parte dos meses. Verifique em Aplicado antes de tentar de novo.");load();return;}
+      await Promise.all(antigos.map(t=>sbPatch(t.id,{excluido:true,motivo_exclusao:"Substituído por nova distribuição"})));
+      setShowRend(false); load();
+      showToast(`✓ Rendimento distribuído em ${novos.length} ${novos.length===1?"mês":"meses"}`);
+      return;
+    }
     if(!formRend.data){setErroRend("Informe a data");return;}
     const c=calcRend(formRend.taxa,formRend.data);
     if(c.a<=0||c.a>100){setErroRend("Informe a taxa anual (ex: 11,5)");return;}
@@ -1185,16 +1250,16 @@ export default function App() {
                 {carteira.temRend
                   ?<>
                     <div style={{fontSize:28,color:"#F4F2ED",fontWeight:800,marginTop:4,fontFamily:"'Fraunces',serif",lineHeight:1.1}}>{carteira.aa.toFixed(2).replace(".",",")}% <span style={{fontSize:13,color:"#C9A566",fontFamily:"'Inter',sans-serif",fontWeight:700}}>ao ano</span></div>
-                    <div style={{fontSize:11,color:"#C9A566",marginTop:4,fontWeight:600}}>acumulado {carteira.acum>=0?"+":""}{carteira.acum.toFixed(2).replace(".",",")}% em {carteira.n} {carteira.n===1?"mês":"meses"} · desde {MES_AB[parseInt(carteira.desde.slice(5),10)-1]}/{carteira.desde.slice(2,4)}</div>
+                    <div style={{fontSize:11,color:"#C9A566",marginTop:4,fontWeight:600}}>acumulado {carteira.acum>=0?"+":""}{carteira.acum.toFixed(2).replace(".",",")}% em {(Math.round(carteira.n*10)/10).toString().replace(".",",")} {Math.round(carteira.n*10)/10===1?"mês":"meses"} · desde {MES_AB[parseInt(carteira.desde.slice(5),10)-1]}/{carteira.desde.slice(2,4)}</div>
                     <div style={{fontSize:11,color:"#F4F2ED",marginTop:3,fontWeight:600}}>Rendeu sozinho + {fmt(carteira.rend)} <span style={{color:"#C9A566",fontWeight:500}}>(já incluso no total)</span></div>
                   </>
                   :<div style={{fontSize:12,color:"#F4F2ED",marginTop:6,fontWeight:600,lineHeight:1.4}}>Registre o rendimento para acompanhar quanto a carteira cresce sozinha.</div>}
                 {rendAberto&&(
                   <div style={{marginTop:12,borderTop:"1px solid #FFFFFF22",paddingTop:6}}>
                     <div style={{fontSize:9,letterSpacing:"0.1em",color:"#C9A566",textTransform:"uppercase",fontWeight:700,margin:"4px 0 2px"}}>Rendimentos cadastrados</div>
-                    {aplicadoOrd.filter(t=>t.meio==="Rendimento").length===0
+                    {aplicadoOrd.filter(isRend).length===0
                       ?<div style={{fontSize:12,color:"#F4F2ED",padding:"8px 0",fontWeight:600}}>Nenhum rendimento cadastrado.</div>
-                      :aplicadoOrd.filter(t=>t.meio==="Rendimento").map((t,i,arr)=>(
+                      :aplicadoOrd.filter(isRend).map((t,i,arr)=>(
                         <div key={t.id} className="row-item" {...(!isFechado?lpProps("lanc",t):{})} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<arr.length-1?"1px solid #FFFFFF18":"none",userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none"}}>
                           <div style={{minWidth:0}}>
                             <div style={{fontSize:12,color:"#F4F2ED",fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{fmtDate(t.data)} · {MESES_NOMES_FULL[parseInt(t.mes.slice(5,7),10)-1]}</div>
@@ -1203,8 +1268,8 @@ export default function App() {
                           <div style={{fontSize:13,color:"#F4F2ED",fontWeight:800,fontFamily:"'Inter',sans-serif",flexShrink:0}}>+ {fmt(t.valor)}</div>
                         </div>
                       ))}
-                    {!isFechado&&<button onClick={()=>{setFormRend({taxa:"",data:hoje()});setErroRend(null);setShowRend(true);}} style={{marginTop:10,background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>+ Registrar rendimento</button>}
-                    {aplicadoOrd.some(t=>t.meio==="Rendimento")&&!isFechado&&<div style={{fontSize:9.5,color:"#C9A56699",marginTop:8}}>Clique com o botão direito (ou segure) num rendimento para editar ou excluir.</div>}
+                    {!isFechado&&<button onClick={()=>{setFormRend(novoFormRend());setErroRend(null);setShowRend(true);}} style={{marginTop:10,background:"transparent",border:"1px solid #C9A56688",color:"#C9A566",borderRadius:8,fontSize:11,fontWeight:700,padding:"7px 12px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>+ Registrar rendimento</button>}
+                    {aplicadoOrd.some(isRend)&&!isFechado&&<div style={{fontSize:9.5,color:"#C9A56699",marginTop:8}}>Clique com o botão direito (ou segure) num rendimento para editar ou excluir.</div>}
                   </div>
                 )}
               </div>
@@ -1251,7 +1316,7 @@ export default function App() {
                       <div style={{width:4,height:40,background:"#2E6E5E",borderRadius:3,flexShrink:0}}/>
                       <div style={{minWidth:0}}>
                         <div style={{fontSize:14,color:"#173C33",fontWeight:700,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{t.descricao}</div>
-                        <div style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif",marginTop:2}}>{fmtDate(t.data)} · {MESES_NOMES_FULL[parseInt(t.mes.slice(5,7),10)-1]} {t.mes.slice(0,4)}</div>
+                        <div style={{fontSize:11,color:"#A39C8A",fontFamily:"'Inter',sans-serif",marginTop:2}}>{fmtDate(t.data)} · {MESES_NOMES_FULL[parseInt(t.mes.slice(5,7),10)-1]} {t.mes.slice(0,4)}{isInc(t)?" · já incluso no montante":""}</div>
                         {t.obs&&<div style={{fontSize:11,color:"#A39C8A",marginTop:1,fontStyle:"italic",fontFamily:"'Inter',sans-serif"}}>{t.obs}</div>}
                       </div>
                     </div>
@@ -1402,32 +1467,76 @@ export default function App() {
           <div className="sheet">
             <div className="handle"/>
             <div style={{fontSize:20,fontWeight:800,color:"#173C33",marginBottom:4,fontFamily:"'Fraunces',serif"}}>Rendimento CDB</div>
-            <div style={{fontSize:11,color:"#A39C8A",marginBottom:18,fontFamily:"'Inter',sans-serif"}}>Informe a taxa anual. O app calcula o rendimento em reais sobre o montante aplicado.</div>
-            <div style={{marginBottom:16}}>
-              <label style={FL}>Taxa anual (% a.a.) *</label>
-              <div style={{position:"relative"}}>
-                <input style={{...INP(erroRend),paddingRight:60,fontSize:22,fontWeight:800,color:"#2E6E5E"}} placeholder="0,00" inputMode="decimal"
-                  value={formRend.taxa} onChange={e=>{setFormRend(f=>({...f,taxa:e.target.value.replace(/[^\d.,]/g,"")}));setErroRend(null);}}/>
-                <span style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",fontSize:13,color:"#7A7466",fontFamily:"'Inter',sans-serif",fontWeight:700}}>% a.a.</span>
-              </div>
-              {erroRend&&<div style={{fontSize:11,color:"#B4483C",marginTop:4,fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{erroRend}</div>}
+            <div style={{display:"flex",gap:4,background:"#F4F2ED",borderRadius:10,padding:4,margin:"12px 0 16px"}}>
+              {[["valor","Valor que rendeu (R$)"],["taxa","Taxa anual (%)"]].map(([k,l])=>(
+                <button key={k} onClick={()=>{setFormRend(f=>({...f,modo:k}));setErroRend(null);}} style={{flex:1,border:"none",borderRadius:8,padding:"9px 4px",fontSize:11.5,fontWeight:700,fontFamily:"'Inter',sans-serif",cursor:"pointer",background:formRend.modo===k?"#173C33":"transparent",color:formRend.modo===k?"#fff":"#7A7466"}}>{l}</button>
+              ))}
             </div>
-            <div style={{marginBottom:8}}>
-              <label style={FL}>Data *</label>
-              <input type="date" style={INP(false)} value={formRend.data} onChange={e=>setFormRend(f=>({...f,data:e.target.value}))}/>
-            </div>
-            {(()=>{
-              const c=calcRend(formRend.taxa,formRend.data||hoje());
-              return c.a>0&&c.base>0?(
-                <div style={{marginTop:14,background:"#F4F2ED",borderRadius:10,padding:"12px 14px",fontFamily:"'Inter',sans-serif"}}>
-                  <div style={{fontSize:11,color:"#7A7466",fontWeight:600}}>Montante base: {fmt(c.base)}</div>
-                  <div style={{fontSize:11,color:"#7A7466",fontWeight:600,marginTop:2}}>Equivalente mensal: {(c.mensal*100).toFixed(3).replace(".",",")}% a.m.</div>
-                  <div style={{fontSize:15,color:"#235448",fontWeight:800,marginTop:6}}>Rendimento do mês: + {fmt(c.valor)}</div>
+            {formRend.modo==="valor"
+              ?<>
+                <div style={{fontSize:11,color:"#A39C8A",marginBottom:14,fontFamily:"'Inter',sans-serif",lineHeight:1.4}}>Esse valor <b>já está dentro</b> do montante aplicado. O app só separa quanto disso foi rendimento e distribui mês a mês.</div>
+                <div style={{marginBottom:14}}>
+                  <label style={FL}>Quanto rendeu no período *</label>
+                  <div style={{position:"relative"}}>
+                    <span style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",fontSize:14,color:"#7A7466",fontFamily:"'Inter',sans-serif",fontWeight:700}}>R$</span>
+                    <input style={{...INP(erroRend),paddingLeft:40,fontSize:22,fontWeight:800,color:"#2E6E5E"}} placeholder="0,00" inputMode="numeric"
+                      value={formRend.valorDigits?d2brl(formRend.valorDigits):""} onChange={e=>{setFormRend(f=>({...f,valorDigits:e.target.value.replace(/\D/g,"")}));setErroRend(null);}}/>
+                  </div>
                 </div>
-              ):null;
-            })()}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                  <div><label style={FL}>De *</label><input type="date" style={INP(false)} value={formRend.de} onChange={e=>{setFormRend(f=>({...f,de:e.target.value}));setErroRend(null);}}/></div>
+                  <div><label style={FL}>Até *</label><input type="date" style={INP(false)} value={formRend.ate} onChange={e=>{setFormRend(f=>({...f,ate:e.target.value}));setErroRend(null);}}/></div>
+                </div>
+                {(()=>{
+                  const V=d2float(formRend.valorDigits||"0");
+                  if(!(V>0)) return null;
+                  const d=distribuir(V,formRend.de,formRend.ate);
+                  if(!d.ok) return null;
+                  const ja=aplicadoTodos.filter(t=>isInc(t)&&d.segs.some(x=>x.k===t.mes)).length;
+                  return (
+                    <div style={{marginTop:14,background:"#F4F2ED",borderRadius:10,padding:"12px 14px",fontFamily:"'Inter',sans-serif"}}>
+                      <div style={{fontSize:10,color:"#7A7466",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:6}}>Distribuição</div>
+                      {d.segs.map(x=>(
+                        <div key={x.k} style={{display:"flex",justifyContent:"space-between",fontSize:12,padding:"3px 0",color:"#173C33"}}>
+                          <span style={{fontWeight:600}}>{MES_AB[parseInt(x.k.slice(5),10)-1]}/{x.k.slice(2,4)} <span style={{color:"#A39C8A",fontWeight:500}}>({f2(x.ini).slice(0,5)}–{f2(x.fim).slice(0,5)})</span></span>
+                          <b>+ {fmt(x.valor)}</b>
+                        </div>
+                      ))}
+                      <div style={{borderTop:"1px solid #E3DFD3",marginTop:6,paddingTop:6,fontSize:11,color:"#7A7466",fontWeight:600}}>≈ {((d.r)*100).toFixed(2).replace(".",",")}% a.m. · {d.aa.toFixed(2).replace(".",",")}% a.a. (taxa constante)</div>
+                      {ja>0&&<div style={{fontSize:10.5,color:"#8A6A1F",marginTop:4,fontWeight:600}}>Substitui {ja} rendimento{ja===1?"":"s"} já cadastrado{ja===1?"":"s"} nesses meses.</div>}
+                    </div>
+                  );
+                })()}
+                {erroRend&&<div style={{fontSize:11,color:"#B4483C",marginTop:8,fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{erroRend}</div>}
+              </>
+              :<>
+                <div style={{fontSize:11,color:"#A39C8A",marginBottom:14,fontFamily:"'Inter',sans-serif",lineHeight:1.4}}>Informe a taxa anual. O app calcula o rendimento em reais e <b>soma</b> ao montante aplicado.</div>
+                <div style={{marginBottom:16}}>
+                  <label style={FL}>Taxa anual (% a.a.) *</label>
+                  <div style={{position:"relative"}}>
+                    <input style={{...INP(erroRend),paddingRight:60,fontSize:22,fontWeight:800,color:"#2E6E5E"}} placeholder="0,00" inputMode="decimal"
+                      value={formRend.taxa} onChange={e=>{setFormRend(f=>({...f,taxa:e.target.value.replace(/[^\d.,]/g,"")}));setErroRend(null);}}/>
+                    <span style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",fontSize:13,color:"#7A7466",fontFamily:"'Inter',sans-serif",fontWeight:700}}>% a.a.</span>
+                  </div>
+                  {erroRend&&<div style={{fontSize:11,color:"#B4483C",marginTop:4,fontWeight:700,fontFamily:"'Inter',sans-serif"}}>{erroRend}</div>}
+                </div>
+                <div style={{marginBottom:8}}>
+                  <label style={FL}>Data *</label>
+                  <input type="date" style={INP(false)} value={formRend.data} onChange={e=>setFormRend(f=>({...f,data:e.target.value}))}/>
+                </div>
+                {(()=>{
+                  const c=calcRend(formRend.taxa,formRend.data||hoje());
+                  return c.a>0&&c.base>0?(
+                    <div style={{marginTop:14,background:"#F4F2ED",borderRadius:10,padding:"12px 14px",fontFamily:"'Inter',sans-serif"}}>
+                      <div style={{fontSize:11,color:"#7A7466",fontWeight:600}}>Montante base: {fmt(c.base)}</div>
+                      <div style={{fontSize:11,color:"#7A7466",fontWeight:600,marginTop:2}}>Equivalente mensal: {(c.mensal*100).toFixed(3).replace(".",",")}% a.m.</div>
+                      <div style={{fontSize:15,color:"#235448",fontWeight:800,marginTop:6}}>Rendimento do mês: + {fmt(c.valor)}</div>
+                    </div>
+                  ):null;
+                })()}
+              </>}
             <div style={{height:16}}/>
-            <button className="btn-success" onClick={salvarRendimento}>Registrar Rendimento</button>
+            <button className="btn-success" onClick={salvarRendimento}>{formRend.modo==="valor"?"Distribuir rendimento":"Registrar Rendimento"}</button>
             <button className="btn-ghost" onClick={()=>setShowRend(false)}>Cancelar</button>
           </div>
         </div>
