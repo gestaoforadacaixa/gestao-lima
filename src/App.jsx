@@ -1173,7 +1173,6 @@ export default function App() {
   const total      = useMemo(()=>contaveis.reduce((s,t)=>s+t.valor,0),[contaveis]);
   const agendados  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data>hoje()),[ativos]);
   const totalAgendado = useMemo(()=>agendados.reduce((s,t)=>s+t.valor,0),[agendados]);
-  const totalProgramado = total + totalAgendado;
   const totalReceita = useMemo(()=>receitas.reduce((s,r)=>s+r.valor,0),[receitas]);
   const saldo        = totalReceita - total;
   const maxDia     = useMemo(()=>{const d=items.map(t=>parseInt(t.data.slice(8,10)));return d.length?Math.max(...d):31;},[items]);
@@ -1679,9 +1678,9 @@ export default function App() {
                 </div>
                 <div role="button" onClick={()=>setPopProg(true)} style={{minWidth:0,borderLeft:"1px solid #F0EEE6",paddingLeft:12,cursor:"pointer"}}>
                   <div style={{fontSize:9,letterSpacing:"0.1em",color:"#A39C8A",textTransform:"uppercase",marginBottom:6,fontWeight:700,lineHeight:1.3}}>Gastos programados ›</div>
-                  <div style={{fontSize:fmt(totalProgramado).length<=11?16:13,fontWeight:800,color:"#8A6A1F",lineHeight:1.1,fontFamily:"'Fraunces',serif"}}>{fmt(totalProgramado)}</div>
+                  <div style={{fontSize:fmt(totalAgendado).length<=11?16:13,fontWeight:800,color:"#8A6A1F",lineHeight:1.1,fontFamily:"'Fraunces',serif"}}>{fmt(totalAgendado)}</div>
                   <div style={{fontSize:9.5,color:"#A39C8A",marginTop:6,fontWeight:600,lineHeight:1.35,fontFamily:"'Inter',sans-serif"}}>
-                    {agendados.length>0?`inclui ${fmt(totalAgendado)} a entrar (${agendados.length})`:"nada agendado"}
+                    {agendados.length>0?`${agendados.length} a executar · já executado fica em Total lançado`:"nada a executar"}
                   </div>
                 </div>
               </div>
