@@ -16,15 +16,20 @@ async function sbGet(mes) {
     return r.ok ? r.json() : null;   // null = falhou (a tela mantém o que já tinha)
   } catch { return null; }
 }
+// `programado` (conta a pagar) é opcional: se a coluna ainda não existir no banco, o lançamento é salvo igual, sem ela.
+const semProg = ({programado, ...resto}) => resto;
 async function sbPost(body) {
   try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/lancamentos`, { method: "POST", headers: H, body: JSON.stringify(body) });
+    let r = await fetch(`${SUPA_URL}/rest/v1/lancamentos`, { method: "POST", headers: H, body: JSON.stringify(body) });
+    if (r.status>=400 && r.status<500 && "programado" in body) r = await fetch(`${SUPA_URL}/rest/v1/lancamentos`, { method: "POST", headers: H, body: JSON.stringify(semProg(body)) });
     return r.ok ? r.json() : null;
   } catch { return null; }
 }
 async function sbPatch(id, body) {
   try {
-    const r = await fetch(`${SUPA_URL}/rest/v1/lancamentos?id=eq.${id}`, { method: "PATCH", headers: { ...H, "Prefer": "return=minimal" }, body: JSON.stringify(body) });
+    const u = `${SUPA_URL}/rest/v1/lancamentos?id=eq.${id}`;
+    let r = await fetch(u, { method: "PATCH", headers: { ...H, "Prefer": "return=minimal" }, body: JSON.stringify(body) });
+    if (r.status>=400 && r.status<500 && "programado" in body) r = await fetch(u, { method: "PATCH", headers: { ...H, "Prefer": "return=minimal" }, body: JSON.stringify(semProg(body)) });
     return r.ok;
   } catch { return false; }
 }
@@ -776,20 +781,37 @@ function progMeta(mt, g) {
 // Central de alertas
 function gerarAlertas(g, metas) {
   const hj=hoje(), mh=hj.slice(0,7), out=[];
-  // 0) Contas que vencem hoje
-  const hojeL = g.l.filter(l=>despesaConta(l)&&l.data===hj);
-  if (hojeL.length) out.push({ nivel:2, hoje:true, qtd:hojeL.length, titulo:`${hojeL.length} conta${hojeL.length>1?"s":""} para pagar hoje`,
-    motivo: hojeL.slice(0,4).map(l=>`${l.descricao} (${fmt(l.valor)})`).join(", ")+(hojeL.length>4?"…":""),
-    total: hojeL.reduce((s,l)=>s+l.valor,0), impacto:`${fmt(hojeL.reduce((s,l)=>s+l.valor,0))} vencendo hoje`,
-    acao:"Pague hoje para evitar juros e multa. Se já pagou, está tudo certo." });
-  // 1) Contas programadas vencendo nos próximos 3 dias
-  const vence = g.l.filter(l=>despesaConta(l)&&l.data>hj&&l.data<=addDias(hj,3)).sort((a,b)=>a.data.localeCompare(b.data));
-  if (vence.length) out.push({ nivel:1, titulo:`${vence.length} conta${vence.length>1?"s":""} vencendo nos próximos 3 dias`,
-    motivo: vence.slice(0,3).map(l=>`${l.descricao} (${fmtDate(l.data)})`).join(", ")+(vence.length>3?"…":""),
-    impacto:`${fmt(vence.reduce((s,l)=>s+l.valor,0))} saindo do caixa`, acao:"Confira se há saldo e execute no dia certo." });
+  // Conta a pagar = lançamento programado que ainda não foi movido para executado.
+  // Ao executar (ou editar para uma data passada, ou excluir), ela sai dos alertas sozinha.
+  const pend = l => despesaConta(l) && (l.programado===true || (l.programado==null && l.data>hj));
+  const soma = a => a.reduce((s,l)=>s+l.valor,0);
+  const lista = (a,n,f) => a.slice(0,n).map(f).join(", ")+(a.length>n?"…":"");
+  const plural = (n,s,p) => n>1?p:s;
+  // 0) Atrasadas (venceram e não foram executadas)
+  const atras = g.l.filter(l=>pend(l)&&l.data<hj).sort((a,b)=>a.data.localeCompare(b.data));
+  if (atras.length) out.push({ nivel:2, titulo:`${atras.length} ${plural(atras.length,"conta atrasada","contas atrasadas")}`,
+    motivo: lista(atras,4,l=>`${l.descricao} (${fmtDate(l.data)})`), impacto:`${fmt(soma(atras))} vencido e ainda não executado`,
+    acao:"Pague e use “Mover para executado” no Histórico. Se já pagou, mova para executado para sair daqui." });
+  // 1) Vencem hoje
+  const hojeL = g.l.filter(l=>pend(l)&&l.data===hj);
+  if (hojeL.length) out.push({ nivel:2, hoje:true, qtd:hojeL.length, titulo:`${hojeL.length} ${plural(hojeL.length,"conta","contas")} para pagar hoje`,
+    motivo: lista(hojeL,4,l=>`${l.descricao} (${fmt(l.valor)})`), total: soma(hojeL), impacto:`${fmt(soma(hojeL))} vencendo hoje`,
+    acao:"Pague hoje e mova para executado — o alerta some sozinho." });
+  // 2) Próximos 3 dias
+  const vence = g.l.filter(l=>pend(l)&&l.data>hj&&l.data<=addDias(hj,3)).sort((a,b)=>a.data.localeCompare(b.data));
+  if (vence.length) out.push({ nivel:1, titulo:`${vence.length} ${plural(vence.length,"conta vencendo","contas vencendo")} nos próximos 3 dias`,
+    motivo: lista(vence,3,l=>`${l.descricao} (${fmtDate(l.data)})`),
+    impacto:`${fmt(soma(vence))} saindo do caixa`, acao:"Confira se há saldo e execute no dia certo." });
+  // 2b) Programado para o resto do mês: caixa cobre?
+  const resto = g.l.filter(l=>pend(l)&&l.mes===mh&&l.data>hj).reduce((s,l)=>s+l.valor,0);
+  const saldoHoje = g.r.filter(r=>(dataRec(r)||"").slice(0,7)===mh&&dataRec(r)<=hj).reduce((s,r)=>s+r.valor,0)
+                  - g.l.filter(l=>despesaConta(l)&&l.mes===mh&&l.data<=hj&&!pend(l)).reduce((s,l)=>s+l.valor,0);
+  if (resto>0 && saldoHoje-resto<0) out.push({ nivel:2, titulo:"Contas programadas passam do saldo do mês",
+    motivo:`Saldo atual ${fmt(saldoHoje)} e ${fmt(resto)} ainda programados até o fim do mês.`, impacto:`Faltam ${fmt(resto-saldoHoje)} para cobrir.`,
+    acao:"Reveja os gastos programados ou antecipe uma receita." });
   // 2) Despesa do mês já passou da receita
   const recMes = g.r.filter(r=>(dataRec(r)||"").slice(0,7)===mh).reduce((s,r)=>s+r.valor,0);
-  const despMes = g.l.filter(l=>despesaConta(l)&&l.mes===mh&&l.data<=hj).reduce((s,l)=>s+l.valor,0);
+  const despMes = g.l.filter(l=>despesaConta(l)&&l.mes===mh&&l.data<=hj&&!pend(l)).reduce((s,l)=>s+l.valor,0);
   if (recMes>0 && despMes>recMes) out.push({ nivel:2, titulo:"Despesa do mês passou da receita",
     motivo:`Despesas ${fmt(despMes)} contra receitas ${fmt(recMes)} neste mês.`, impacto:`Saldo do mês em ${fmt(recMes-despMes)}.`,
     acao:"Segure gastos não essenciais até o próximo recebimento." });
@@ -798,7 +820,7 @@ function gerarAlertas(g, metas) {
   if (dia>=7) {
     const ma = mAdd(mh,-1);
     const ate = (l,mk)=> l.mes===mk && parseInt(l.data.slice(8,10),10)<=dia && l.data<=hj || (l.mes===mk && mk<mh && parseInt(l.data.slice(8,10),10)<=dia);
-    const atual = g.l.filter(l=>despesaConta(l)&&ate(l,mh)).reduce((s,l)=>s+l.valor,0);
+    const atual = g.l.filter(l=>despesaConta(l)&&!pend(l)&&ate(l,mh)).reduce((s,l)=>s+l.valor,0);
     const ant   = g.l.filter(l=>despesaConta(l)&&ate(l,ma)).reduce((s,l)=>s+l.valor,0);
     if (ant>0 && atual>ant*1.2) out.push({ nivel: atual>ant*1.5?2:1, titulo:`Gasto ${(((atual-ant)/ant)*100).toFixed(0)}% acima do mês passado`,
       motivo:`Até o dia ${dia}: ${fmt(atual)} agora contra ${fmt(ant)} no mês anterior.`, impacto:`Diferença de ${fmt(atual-ant)} a mais.`,
@@ -1308,7 +1330,7 @@ export default function App() {
       id: uid(), cliente_id: CID, mes: form.data.slice(0,7), centro: "empresa",
       categoria: form.categoria, descricao: form.descricao.trim(), valor,
       meio: form.meio, data: form.data, obs: form.obs, excluido: false,
-      recorrente: !!form.recorrente, motivo_exclusao: "",
+      recorrente: !!form.recorrente, motivo_exclusao: "", programado: form.data>hoje(),
     };
     const res = await sbPost(item);
     setShowForm(false);
@@ -1319,7 +1341,7 @@ export default function App() {
       const novas = [];
       for(let i=1;i<=n;i++){
         const dt = addMesesData(form.data, i);
-        novas.push({...item, id: uid(), mes: dt.slice(0,7), data: dt});
+        novas.push({...item, id: uid(), mes: dt.slice(0,7), data: dt, programado: dt>hoje()});
       }
       const resultados = await Promise.all(novas.map(x=>sbPost(x)));
       extras = resultados.filter(Boolean).length;
@@ -1350,6 +1372,7 @@ export default function App() {
       descricao: form.descricao.trim(), valor: d2float(form.valorDigits),
       categoria: form.categoria, meio: form.meio, data: form.data,
       mes: form.data.slice(0,7), obs: form.obs,
+      programado: form.data>hoje() || (editItem.programado===true && form.data===editItem.data),
     });
     setEditItem(null);
     if(ok){ load(); showToast("✓ Lançamento atualizado"); }
@@ -1409,7 +1432,7 @@ export default function App() {
     if(res){ load(); showToast("✓ Rendimento registrado"); }
   };
   const provisionar=async t=>{
-    const ok = await sbPatch(t.id, { data: hoje(), mes: hoje().slice(0,7) });
+    const ok = await sbPatch(t.id, { data: hoje(), mes: hoje().slice(0,7), programado: false });
     if(ok){ load(); showToast("✓ Movido para executado"); }
   };
   const openEditReceita=r=>{
