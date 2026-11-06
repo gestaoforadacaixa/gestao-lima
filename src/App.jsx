@@ -863,30 +863,30 @@ function gerarAlertas(g, metas) {
   const plural = (n,s,p) => n>1?p:s;
   // 0) Atrasadas (venceram e não foram executadas)
   const atras = g.l.filter(l=>pend(l)&&l.data<hj).sort((a,b)=>a.data.localeCompare(b.data));
-  if (atras.length) out.push({ nivel:2, titulo:`${atras.length} ${plural(atras.length,"conta atrasada","contas atrasadas")}`,
+  if (atras.length) out.push({ nivel:2, key:"atr:"+atras.map(l=>l.id).join(","), ids:atras.map(l=>l.id), titulo:`${atras.length} ${plural(atras.length,"conta atrasada","contas atrasadas")}`,
     motivo: lista(atras,4,l=>`${l.descricao} (${fmtDate(l.data)})`), impacto:`${fmt(soma(atras))} vencido e ainda não executado`,
     acao:"Pague e use “Mover para executado” no Histórico. Se já pagou, mova para executado para sair daqui." });
   // 1) Vencem hoje
   const hojeL = g.l.filter(l=>pend(l)&&l.data===hj);
-  if (hojeL.length) out.push({ nivel:2, hoje:true, qtd:hojeL.length, titulo:`${hojeL.length} ${plural(hojeL.length,"conta","contas")} para pagar hoje`,
+  if (hojeL.length) out.push({ nivel:2, key:"hoje:"+hojeL.map(l=>l.id).join(","), ids:hojeL.map(l=>l.id), hoje:true, qtd:hojeL.length, titulo:`${hojeL.length} ${plural(hojeL.length,"conta","contas")} para pagar hoje`,
     motivo: lista(hojeL,4,l=>`${l.descricao} (${fmt(l.valor)})`), total: soma(hojeL), impacto:`${fmt(soma(hojeL))} vencendo hoje`,
     acao:"Pague hoje e mova para executado — o alerta some sozinho." });
   // 2) Próximos 3 dias
   const vence = g.l.filter(l=>pend(l)&&l.data>hj&&l.data<=addDias(hj,3)).sort((a,b)=>a.data.localeCompare(b.data));
-  if (vence.length) out.push({ nivel:1, titulo:`${vence.length} ${plural(vence.length,"conta vencendo","contas vencendo")} nos próximos 3 dias`,
+  if (vence.length) out.push({ nivel:1, key:"venc:"+vence.map(l=>l.id).join(","), ids:vence.map(l=>l.id), titulo:`${vence.length} ${plural(vence.length,"conta vencendo","contas vencendo")} nos próximos 3 dias`,
     motivo: lista(vence,3,l=>`${l.descricao} (${fmtDate(l.data)})`),
     impacto:`${fmt(soma(vence))} saindo do caixa`, acao:"Confira se há saldo e execute no dia certo." });
   // 2b) Programado para o resto do mês: caixa cobre?
   const resto = g.l.filter(l=>pend(l)&&l.mes===mh&&l.data>hj).reduce((s,l)=>s+l.valor,0);
   const saldoHoje = g.r.filter(r=>(dataRec(r)||"").slice(0,7)===mh&&dataRec(r)<=hj).reduce((s,r)=>s+r.valor,0)
                   - g.l.filter(l=>despesaConta(l)&&l.mes===mh&&l.data<=hj&&!pend(l)).reduce((s,l)=>s+l.valor,0);
-  if (resto>0 && saldoHoje-resto<0) out.push({ nivel:2, titulo:"Contas programadas passam do saldo do mês",
+  if (resto>0 && saldoHoje-resto<0) out.push({ nivel:2, key:"saldoprog:"+mh, titulo:"Contas programadas passam do saldo do mês",
     motivo:`Saldo atual ${fmt(saldoHoje)} e ${fmt(resto)} ainda programados até o fim do mês.`, impacto:`Faltam ${fmt(resto-saldoHoje)} para cobrir.`,
     acao:"Reveja os gastos programados ou antecipe uma receita." });
   // 2) Despesa do mês já passou da receita
   const recMes = g.r.filter(r=>(dataRec(r)||"").slice(0,7)===mh).reduce((s,r)=>s+r.valor,0);
   const despMes = g.l.filter(l=>despesaConta(l)&&l.mes===mh&&l.data<=hj&&!pend(l)).reduce((s,l)=>s+l.valor,0);
-  if (recMes>0 && despMes>recMes) out.push({ nivel:2, titulo:"Despesa do mês passou da receita",
+  if (recMes>0 && despMes>recMes) out.push({ nivel:2, key:"despmes:"+mh, titulo:"Despesa do mês passou da receita",
     motivo:`Despesas ${fmt(despMes)} contra receitas ${fmt(recMes)} neste mês.`, impacto:`Saldo do mês em ${fmt(recMes-despMes)}.`,
     acao:"Segure gastos não essenciais até o próximo recebimento." });
   // 3) Gasto acima do mesmo período do mês anterior (a partir do dia 7)
@@ -896,14 +896,14 @@ function gerarAlertas(g, metas) {
     const ate = (l,mk)=> l.mes===mk && parseInt(l.data.slice(8,10),10)<=dia && l.data<=hj || (l.mes===mk && mk<mh && parseInt(l.data.slice(8,10),10)<=dia);
     const atual = g.l.filter(l=>despesaConta(l)&&!pend(l)&&ate(l,mh)).reduce((s,l)=>s+l.valor,0);
     const ant   = g.l.filter(l=>despesaConta(l)&&ate(l,ma)).reduce((s,l)=>s+l.valor,0);
-    if (ant>0 && atual>ant*1.2) out.push({ nivel: atual>ant*1.5?2:1, titulo:`Gasto ${(((atual-ant)/ant)*100).toFixed(0)}% acima do mês passado`,
+    if (ant>0 && atual>ant*1.2) out.push({ nivel: atual>ant*1.5?2:1, key:"comp:"+mh, titulo:`Gasto ${(((atual-ant)/ant)*100).toFixed(0)}% acima do mês passado`,
       motivo:`Até o dia ${dia}: ${fmt(atual)} agora contra ${fmt(ant)} no mês anterior.`, impacto:`Diferença de ${fmt(atual-ant)} a mais.`,
       acao:"Veja em Categorias onde o gasto subiu." });
   }
   // 4) Metas atrasadas ou fora do ritmo
   metas.filter(m=>!m.excluido).forEach(m=>{
     const p = progMeta(m, g);
-    if (p.status.nivel>0) out.push({ nivel:p.status.nivel, titulo:`Meta "${m.nome}": ${p.status.txt}`,
+    if (p.status.nivel>0) out.push({ nivel:p.status.nivel, key:"meta:"+m.id+":"+p.status.txt, titulo:`Meta "${m.nome}": ${p.status.txt}`,
       motivo:`${fmtMeta(m,p.atual)} de ${fmtMeta(m,p.alvo)} (${(p.pct*100).toFixed(0)}%) — ${p.detalhe}.`,
       impacto: m.tipo==="limite"?"Despesa acima do planejado.":"Objetivo pode não ser atingido no prazo.",
       acao: m.tipo==="limite"?"Reduza os gastos ligados a essa meta.":m.tipo==="patrimonio"?"Pague a parcela e vincule a despesa a esta meta ao lançar.":"Reveja o plano ou ajuste o prazo da meta." });
@@ -1131,7 +1131,7 @@ function CardRealizada({m, p, onClick}) {
     </div>
   );
 }
-function PainelAlertas({alertas, onClose}) {
+function PainelAlertas({alertas, onClose, onIgnorar, onExecutei, nIgnorados, onRestaurar}) {
   const NIV = [{t:"Info",c:"#2F65AC",f:"#EEF3FB"},{t:"Atenção",c:"#A6822E",f:"#FBF3E4"},{t:"Crítico",c:"#B4483C",f:"#FBECEA"}];
   const crit = alertas.some(a=>a.nivel===2);
   return (
@@ -1150,8 +1150,13 @@ function PainelAlertas({alertas, onClose}) {
           <div style={{fontSize:11.5,color:"#444",lineHeight:1.45}}><b>Motivo:</b> {a.motivo}</div>
           <div style={{fontSize:11.5,color:"#444",lineHeight:1.45}}><b>Impacto:</b> {a.impacto}</div>
           <div style={{fontSize:11.5,color:n.c,lineHeight:1.45,fontWeight:700,marginTop:2}}>→ {a.acao}</div>
+          <div style={{display:"flex",gap:8,marginTop:10}}>
+            {a.ids&&<button onClick={()=>onExecutei(a)} style={{flex:1,border:"none",background:"#2E6E5E",color:"#fff",borderRadius:9,padding:"8px 6px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>✓ Já executei</button>}
+            <button onClick={()=>onIgnorar(a)} style={{flex:1,border:`1.5px solid ${n.c}55`,background:"#fff",color:"#7A7466",borderRadius:9,padding:"8px 6px",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>Tirar alerta</button>
+          </div>
         </div>
       );})}
+      {nIgnorados>0&&<button onClick={onRestaurar} style={{display:"block",margin:"4px auto 10px",background:"none",border:"none",color:"#2E6E5E",fontSize:12,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>Mostrar de novo os alertas retirados ({nIgnorados})</button>}
       <button className="btn-ghost" onClick={onClose}>Fechar</button>
     </Modal>
   );
@@ -1273,7 +1278,9 @@ export default function App() {
   const totalAnt   = useMemo(()=>soma(itemsAnt.filter(t=>parseInt(t.data.slice(8,10))<=maxDia)),[itemsAnt,maxDia]);
   const sorted     = useMemo(()=>[...items].sort((a,b)=>new Date(b.data)-new Date(a.data)),[items]);
   const sortedReceitas = useMemo(()=>[...receitas].sort((a,b)=>new Date(b.semana)-new Date(a.semana)),[receitas]);
-  const alertas   = useMemo(()=>gerarAlertas(glob, metas),[glob,metas]);
+  const [ignorados,setIgnorados] = useState(()=>{ try{ const a=JSON.parse(localStorage.getItem("lima_alertas_ignorados")||"[]"); return Array.isArray(a)?a:[]; }catch{ return []; } });
+  const salvaIgn = lista => { const l=lista.slice(-200); setIgnorados(l); try{ localStorage.setItem("lima_alertas_ignorados", JSON.stringify(l)); }catch{} };
+  const alertas   = useMemo(()=>gerarAlertas(glob, metas).filter(a=>!ignorados.includes(a.key)),[glob,metas,ignorados]);
   const nivelAlerta = alertas.reduce((m,a)=>Math.max(m,a.nivel),0);
   const totalAplicadoGeral = useMemo(()=>aplicadoTodos.filter(t=>!isInc(t)).reduce((s,t)=>s+t.valor,0),[aplicadoTodos]);
   const rendInfo = useMemo(()=>{
@@ -2630,7 +2637,15 @@ export default function App() {
           <button className="btn-ghost" onClick={()=>{setDelGen(null);setMotivoExc("");setMotivoErr(false);}}>Cancelar</button>
         </Modal>
       )}
-      {showAlertas&&<PainelAlertas alertas={alertas} onClose={()=>setShowAlertas(false)}/>}
+      {showAlertas&&<PainelAlertas alertas={alertas} onClose={()=>setShowAlertas(false)}
+        onIgnorar={a=>{ salvaIgn([...ignorados,a.key]); showToast("Alerta retirado"); }}
+        onExecutei={async a=>{
+          const hj=hoje(), alvo=glob.l.filter(l=>a.ids.includes(l.id));
+          const res=await Promise.all(alvo.map(l=>sbPatch(l.id, l.data>hj ? {data:hj,mes:hj.slice(0,7),programado:false} : {programado:false})));
+          salvaIgn([...ignorados,a.key]);   // garante que sai do painel mesmo que o banco ainda não tenha a coluna nova
+          if(res.every(Boolean)){ load(); showToast("✓ Marcado como executado"); } else showToast("⚠ Não salvou no banco");
+        }}
+        nIgnorados={ignorados.length} onRestaurar={()=>salvaIgn([])}/>}
       {toast&&<div className="toast">{toast}</div>}
     </div>
   );
