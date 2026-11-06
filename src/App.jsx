@@ -730,6 +730,8 @@ const qtdItens = m => {
   const alvo = Number(m.valor_alvo)||0;
   return alvo>0 && medidoresDe(m).includes("quantidade") ? [{ id:"legacy", nome:"", alvo, atual:Number(m.valor_atual)||0, unidade:m.unidade||"", per:qtdPer(m), log:lerLog(m) }] : [];
 };
+// Quantas parcelas já venceram (antes de hoje) para um financiamento que começou em `ini`
+const decorridas = (ini, np) => { if(!ini||!(np>0)) return 0; let n=0; for(let i=0;i<np;i++) if(addMesesData(ini,i)<hoje()) n++; return n; };
 const itensDoForm = f => { const q=f.qi, rasc = parseInt(q.alvo)>0 ? [{ id:"rasc", nome:q.nome.trim(), alvo:parseInt(q.alvo), atual:q.per==="total"?(parseInt(q.atual)||0):0, unidade:q.unidade.trim(), per:q.per, log:{} }] : []; return [...f.qtdItens, ...rasc]; };
 function progItemQtd(it) {
   const per = QTD_PER[it.per] ? it.per : "total", alvo = Number(it.alvo)||0, hj = hoje();
@@ -793,13 +795,15 @@ function progMeta(mt, g) {
     atual = montanteAplicado(g);
     detalhe = "montante aplicado hoje";
   } else if (tipo==="patrimonio") {
-    const np = Number(mt.parcelas)||0, ent = Number(mt.valor_inicial)||0;
+    const np = Number(mt.parcelas)||0, ent = Number(mt.valor_inicial)||0, antes = Math.min(np, Math.max(0, Number(mt.parc_pagas)||0));
+    const parcEst = np>0 ? Math.max(0, alvo-ent)/np : 0;
     const pg = g.l.filter(l=>l.meta_id===mt.id && despesaConta(l) && !pendConta(l,hj) && l.data<=hj);
-    atual = ent + pg.reduce((s,l)=>s+l.valor,0);
+    atual = ent + antes*parcEst + pg.reduce((s,l)=>s+l.valor,0);
+    const pagasTot = Math.min(np||Infinity, antes + pg.length);
     let esperado = 0;
     if (np>0 && mt.data_inicio) for (let i=0;i<np;i++) if (addMesesData(mt.data_inicio,i)<=hj) esperado++;
-    patr = { np, pagas:pg.length, restam:Math.max(0,np-pg.length), esperado, ent };
-    detalhe = `${pg.length}${np?` de ${np}`:""} parcela${pg.length===1?"":"s"} paga${pg.length===1?"":"s"}${ent>0?` · entrada ${fmt(ent)}`:""}`;
+    patr = { np, pagas:pagasTot, restam:Math.max(0,np-pagasTot), esperado, ent, antes };
+    detalhe = `${pagasTot}${np?` de ${np}`:""} parcela${pagasTot===1?"":"s"} paga${pagasTot===1?"":"s"}${ent>0?` · entrada ${fmt(ent)}`:""}`;
   } else if (tipo==="limite") {
     atual = g.l.filter(l=>despesaConta(l)&&l.mes===mh&&l.data<=hj&&(!mt.categoria||l.categoria===mt.categoria)).reduce((s,l)=>s+l.valor,0);
     detalhe = mt.categoria ? `gasto em ${mt.categoria} neste mês` : "despesa total deste mês";
@@ -1532,14 +1536,14 @@ export default function App() {
   // ─── Metas ───
   const baseMeta = grupo => ({ grupo, tipo: grupo==="financeira"?"faturamento":"objetiva", medidores: grupo==="objetiva"?["quantidade"]:[],
     nome:"", descricao:"", centro:"pessoal", categoria:"", unidade:"",
-    iniDigits:"", alvoDigits:"", atualDigits:"", parcelas:"", qtdItens:[], qi:{...qiVazio}, etapas:[], novaEtapa:"", cal_freq:"diario", cal_vezes:"3", data_inicio:hoje(), prazo:"" });
+    iniDigits:"", alvoDigits:"", atualDigits:"", parcelas:"", parcPagas:"", qtdItens:[], qi:{...qiVazio}, etapas:[], novaEtapa:"", cal_freq:"diario", cal_vezes:"3", data_inicio:hoje(), prazo:"" });
   const novaMeta = grupo => { setErroGen({}); setFormMeta({ f: baseMeta(grupo) }); };
   const editarMeta = m => {
     const t=tipoMeta(m.tipo), g=TIPOS_META[t].grupo, n=x=>Number(x)||0, md=medidoresDe(m);
     setErroGen({}); setMetaTab("nova");
     setFormMeta({ item:m, f:{ ...baseMeta(g), tipo:t, medidores: g==="objetiva"?(md.length?md:["quantidade"]):[], nome:m.nome||"", descricao:m.descricao||"", centro:"pessoal", categoria:m.categoria||"", unidade:m.unidade||"",
       iniDigits:n(m.valor_inicial)?float2d(n(m.valor_inicial)):"", alvoDigits:g==="financeira"&&n(m.valor_alvo)?float2d(n(m.valor_alvo)):"", atualDigits:t==="valor"&&n(m.valor_atual)?float2d(n(m.valor_atual)):"",
-      parcelas:m.parcelas?String(m.parcelas):"", qtdItens: md.includes("quantidade") ? qtdItens(m).map(it=>({...it,id:it.id==="legacy"?uid():it.id})) : [], etapas:lerEtapas(m),
+      parcelas:m.parcelas?String(m.parcelas):"", parcPagas:m.parc_pagas!=null?String(m.parc_pagas):"", qtdItens: md.includes("quantidade") ? qtdItens(m).map(it=>({...it,id:it.id==="legacy"?uid():it.id})) : [], etapas:lerEtapas(m),
       cal_freq:m.cal_freq||"diario", cal_vezes:String(m.cal_vezes||3), data_inicio:m.data_inicio||hoje(), prazo:m.prazo||"" } });
   };
   const salvarMeta = async () => {
@@ -1553,6 +1557,7 @@ export default function App() {
     if(md.includes("calendario") && f.cal_freq==="periodo"){ const nd=(f.data_inicio&&f.prazo&&f.prazo>=f.data_inicio)?diasEntre(f.data_inicio,f.prazo)+1:0;
       if(!(parseInt(f.cal_vezes)>=1)) e.cal_vezes="Informe quantos dias"; else if(nd&&parseInt(f.cal_vezes)>nd) e.cal_vezes=`O período tem só ${nd} dias`; }
     const pat = f.tipo==="patrimonio";
+    if(pat && f.parcPagas!=="" && parseInt(f.parcPagas)>parseInt(f.parcelas)) e.parcPagas="Não pode passar do total de parcelas";
     if(pat && !(parseInt(f.parcelas)>=1 && parseInt(f.parcelas)<=480)) e.parcelas="Informe as parcelas (1 a 480)";
     if(pat && d2float(f.iniDigits)>=d2float(f.alvoDigits) && d2float(f.alvoDigits)>0) e.ini="A entrada deve ser menor que o valor do patrimônio";
     if(pat && !f.data_inicio) e.data_inicio="Informe o vencimento da 1ª parcela";
@@ -1564,6 +1569,7 @@ export default function App() {
     const body = { nome:f.nome.trim(), descricao:f.descricao.trim(), grupo:T.grupo, tipo:f.tipo, centro:"pessoal",
       categoria: f.tipo==="limite"&&f.categoria ? f.categoria : null, unidade: pat ? (BENS[f.unidade]?f.unidade:"veiculo") : null,
       parcelas: pat ? parseInt(f.parcelas,10) : null,
+      parc_pagas: pat ? Math.min(parseInt(f.parcelas,10)||0, f.parcPagas!=="" ? (parseInt(f.parcPagas,10)||0) : decorridas(f.data_inicio, parseInt(f.parcelas,10)||0)) : null,
       valor_inicial: (f.tipo==="acumular"||pat) ? d2float(f.iniDigits) : 0,
       valor_alvo: T.grupo==="financeira" ? d2float(f.alvoDigits) : 0,
       valor_atual: f.tipo==="valor" ? d2float(f.atualDigits) : 0,
@@ -2074,7 +2080,7 @@ export default function App() {
                 const tiposDoGrupo = Object.entries(TIPOS_META).filter(([,t])=>t.grupo==="financeira");
                 const obj = f.tipo==="objetiva", md = obj ? f.medidores : [], pat = f.tipo==="patrimonio", bem = BENS[f.unidade]?f.unidade:"veiculo";
                 const alternarMedidor = k => { setFormMeta(x=>{ const l=x.f.medidores; return {...x,f:{...x.f,medidores: l.includes(k)?l.filter(y=>y!==k):[...l,k]}}; }); setErroGen(e=>({...e,medidores:null})); };
-                const previa = (()=>{ const mt={ id:ed?ed.id:"previa", parcelas:parseInt(f.parcelas)||0, nome:f.nome||"Nome da meta", tipo:f.tipo, centro:"pessoal", categoria:f.categoria||null, unidade:f.tipo==="patrimonio"?bem:f.unidade, medidores:md,
+                const previa = (()=>{ const mt={ id:ed?ed.id:"previa", parcelas:parseInt(f.parcelas)||0, parc_pagas: f.parcPagas!=="" ? (parseInt(f.parcPagas)||0) : decorridas(f.data_inicio, parseInt(f.parcelas)||0), nome:f.nome||"Nome da meta", tipo:f.tipo, centro:"pessoal", categoria:f.categoria||null, unidade:f.tipo==="patrimonio"?bem:f.unidade, medidores:md,
                   valor_inicial:d2float(f.iniDigits), valor_alvo: T.grupo==="financeira"?d2float(f.alvoDigits):0,
                   valor_atual: f.tipo==="valor"?d2float(f.atualDigits):0, qtd_itens: md.includes("quantidade") ? itensDoForm(f) : null, etapas:f.etapas, checkins: ed ? ed.checkins : [],
                   cal_freq:f.cal_freq, cal_vezes:parseInt(f.cal_vezes)||1, data_inicio:f.data_inicio, prazo:f.tipo==="patrimonio"&&parseInt(f.parcelas)>0&&f.data_inicio?addMesesData(f.data_inicio,parseInt(f.parcelas)-1):f.prazo, criado_em:hoje() };
@@ -2237,11 +2243,23 @@ export default function App() {
                       {T.mensal
                         ?<div style={{fontSize:12,color:"#7A7466",fontWeight:600,background:"#F4F2ED",borderRadius:10,padding:"10px 12px"}}>🔁 Meta mensal: começa no dia 1 e renova todo mês sozinha.</div>
                         :pat
-                        ?<div>
-                          <label style={FL}>Vencimento da 1ª parcela *</label>
+                        ?(()=>{ const np=parseInt(f.parcelas)||0, dec=decorridas(f.data_inicio,np), pagasV=Math.min(np, f.parcPagas!==""?(parseInt(f.parcPagas)||0):dec), fim=np>0&&f.data_inicio?addMesesData(f.data_inicio,np-1):null; return (
+                        <div>
+                          <label style={FL}>Quando iniciou · vencimento da 1ª parcela *</label>
                           <input type="date" style={INP(erroGen.data_inicio)} value={f.data_inicio} onChange={e=>up("data_inicio",e.target.value)}/><ErrTxt msg={erroGen.data_inicio}/>
-                          {parseInt(f.parcelas)>0&&f.data_inicio&&<div style={{fontSize:11.5,color:"#7A7466",fontWeight:700,marginTop:8}}>Última parcela em {fmtDate(addMesesData(f.data_inicio,parseInt(f.parcelas)-1))}.</div>}
-                        </div>
+                          {np>0&&f.data_inicio&&<>
+                            <div style={{marginTop:14}}>
+                              <label style={FL}>Parcelas já pagas</label>
+                              <input inputMode="numeric" style={{...INP(erroGen.parcPagas),width:"50%"}} placeholder={String(dec)} value={f.parcPagas} onChange={e=>up("parcPagas",e.target.value.replace(/\D/g,"").slice(0,3))}/>
+                              <ErrTxt msg={erroGen.parcPagas}/>
+                              <div style={{fontSize:11,color:"#A39C8A",fontWeight:600,marginTop:6}}>Em branco: usa as {dec} parcela{dec===1?"":"s"} que já venceram até hoje. As próximas você vincula ao lançar a despesa.</div>
+                            </div>
+                            <div style={{fontSize:12,color:"#235448",fontWeight:700,background:"#EAF3EF",borderRadius:10,padding:"10px 12px",marginTop:12,lineHeight:1.55}}>
+                              📅 Encerra em <b>{fmtDate(fim)}/{fim.slice(0,4)}</b><br/>
+                              ✅ {pagasV} paga{pagasV===1?"":"s"} · ⏳ faltam <b>{Math.max(0,np-pagasV)}</b> parcela{np-pagasV===1?"":"s"}{np-pagasV>0&&d2float(f.alvoDigits)>d2float(f.iniDigits)?` de cerca de ${fmt((d2float(f.alvoDigits)-d2float(f.iniDigits))/np)}`:""}
+                            </div>
+                          </>}
+                        </div>);})()
                         :<div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",gap:10}}>
                           <div><label style={FL}>Início{f.tipo==="acumular"||md.includes("calendario")?" *":""}</label><input type="date" style={INP(erroGen.data_inicio)} value={f.data_inicio} onChange={e=>up("data_inicio",e.target.value)}/><ErrTxt msg={erroGen.data_inicio}/></div>
                           <div><label style={FL}>Prazo *</label><input type="date" style={INP(erroGen.prazo)} min={f.data_inicio||undefined} value={f.prazo} onChange={e=>up("prazo",e.target.value)}/><ErrTxt msg={erroGen.prazo}/></div>
