@@ -722,7 +722,7 @@ const QTD_PER = { total:"Acumulado", dia:"Por dia", semana:"Por semana", mes:"Po
 const qtdPer = m => QTD_PER[m.qtd_per] ? m.qtd_per : "total";
 const lerLog = m => { const e=lerJson(m.qtd_log, {}); return e && typeof e==="object" && !Array.isArray(e) ? e : {}; };
 const iniPeriodo = (per, d) => { if(per==="mes") return d.slice(0,7)+"-01"; if(per==="semana"){ const [y,mo,dd]=d.split("-").map(Number); const w=new Date(y,mo-1,dd).getDay(); return addDias(d, -((w+6)%7)); } return d; };
-const qiVazio = { nome:"", alvo:"", atual:"", unidade:"", per:"total" };
+const qiVazio = { nome:"", alvo:"", atual:"", unidade:"", per:"total", fonte:"" };
 // Uma meta pode ter várias atividades com quantidade (ex.: 100 flexões por dia + 2 copos de água por dia)
 const qtdItens = m => {
   const a = lerJson(m.qtd_itens, []);
@@ -732,12 +732,19 @@ const qtdItens = m => {
 };
 // Quantas parcelas já venceram (antes de hoje) para um financiamento que começou em `ini`
 const decorridas = (ini, np) => { if(!ini||!(np>0)) return 0; let n=0; for(let i=0;i<np;i++) if(addMesesData(ini,i)<hoje()) n++; return n; };
-const itensDoForm = f => { const q=f.qi, rasc = parseInt(q.alvo)>0 ? [{ id:"rasc", nome:q.nome.trim(), alvo:parseInt(q.alvo), atual:q.per==="total"?(parseInt(q.atual)||0):0, unidade:q.unidade.trim(), per:q.per, log:{} }] : []; return [...f.qtdItens, ...rasc]; };
-function progItemQtd(it) {
+const itensDoForm = f => { const q=f.qi, rasc = parseInt(q.alvo)>0 ? [{ id:"rasc", nome:q.nome.trim(), alvo:parseInt(q.alvo), atual:q.per==="total"?(parseInt(q.atual)||0):0, unidade:q.unidade.trim(), per:q.per, fonte:q.per==="total"?q.fonte:"", log:{} }] : []; return [...f.qtdItens, ...rasc]; };
+function progItemQtd(it, todos=[]) {
   const per = QTD_PER[it.per] ? it.per : "total", alvo = Number(it.alvo)||0, hj = hoje();
   const n = v => Math.round(v).toLocaleString("pt-BR"), un = it.unidade ? " "+it.unidade : "";
   let atual, rot="", extra="";
-  if (per==="total") atual = Number(it.atual)||0;
+  let auto = false;
+  const src = per==="total" && it.fonte ? todos.find(x=>x.id===it.fonte) : null;
+  if (per==="total" && src) {   // soma automática: tudo que foi marcado na atividade de origem (ex.: flexões por dia)
+    auto = true;
+    atual = (Number(it.atual)||0) + Object.values(src.log||{}).reduce((s,v)=>s+(Number(v)||0),0);
+    extra = `🔗 soma automática de ${src.nome||"outra atividade"}`;
+  }
+  else if (per==="total") atual = Number(it.atual)||0;
   else {
     const log = it.log && typeof it.log==="object" ? it.log : {}, ini = iniPeriodo(per,hj);
     atual = Object.entries(log).filter(([d])=>d>=ini&&d<=hj).reduce((s,[,v])=>s+(Number(v)||0),0);
@@ -746,7 +753,7 @@ function progItemQtd(it) {
     rot = {dia:"hoje",semana:"nesta semana",mes:"neste mês"}[per];
     extra = `${QTD_PER[per]} · ${bat} ${bat===1?u[0]:u[1]} com a meta batida`;
   }
-  return { id:it.id, nome:it.nome||"", per, recorr:per!=="total", atual, alvo, pct: alvo>0?atual/alvo:0,
+  return { id:it.id, nome:it.nome||"", per, auto, recorr:per!=="total", atual, alvo, pct: alvo>0?atual/alvo:0,
     txt:`${n(atual)} de ${n(alvo)}${un}${rot?" "+rot:""}`, falta: alvo>atual?`${it.nome?it.nome+": ":""}faltam ${n(alvo-atual)}${un}${rot?" "+rot:""}`:"", extra };
 }
 const fmtQtd = (m, v) => `${Math.round(v).toLocaleString("pt-BR")}${m.unidade?" "+m.unidade:""}`;
@@ -769,7 +776,7 @@ function sequencia(lista) {
 function progMedidores(m) {
   return medidoresDe(m).map(k=>{
     if (k==="quantidade") {
-      const its = qtdItens(m).map(progItemQtd), pct = its.length ? its.reduce((s,x)=>s+Math.min(1,x.pct),0)/its.length : 0, bat = its.filter(x=>x.pct>=1).length;
+      const arr = qtdItens(m), its = arr.map(it=>progItemQtd(it,arr)), pct = its.length ? its.reduce((s,x)=>s+Math.min(1,x.pct),0)/its.length : 0, bat = its.filter(x=>x.pct>=1).length;
       return { k, itens:its, recorr:its.some(x=>x.recorr), atual:bat, alvo:its.length, pct,
         txt: its.length===1 ? `${its[0].nome?its[0].nome+": ":""}${its[0].txt}` : `${its.length} atividades · ${bat} no alvo`,
         falta: its.map(x=>x.falta).filter(Boolean).join(" · ") };
@@ -1030,8 +1037,8 @@ function BlocoMedidor({m, x, onQtd, onEtapa, onDia}) {
             <span style={{fontSize:11.5,fontWeight:800,color:it.pct>=1?"#235448":"#666"}}>{it.txt} · {Math.round(Math.min(1,it.pct)*100)}%</span>
           </div>
           <Bar percent={it.pct*100} color={cor}/>
-          {it.extra&&<div style={{fontSize:11,fontWeight:700,color:"#A39C8A",marginTop:6}}>🔁 {it.extra}</div>}
-          {onQtd&&<div style={{display:"flex",gap:8,marginTop:8}}>
+          {it.extra&&<div style={{fontSize:11,fontWeight:700,color:"#A39C8A",marginTop:6}}>{it.auto?"":"🔁 "}{it.extra}</div>}
+          {onQtd&&!it.auto&&<div style={{display:"flex",gap:8,marginTop:8}}>
             {[-1,1,5,10,50].map(d=>(
               <button key={d} onClick={()=>onQtd(m,d,it.id)} style={{flex:1,border:`2px solid ${d>0?"#2E6E5E":"#E3DFD3"}`,background:d>0?"#EAF3EF":"#fff",color:d>0?"#235448":"#666",borderRadius:10,padding:"8px 4px",fontSize:15,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{d>0?`+ ${d}`:`− ${Math.abs(d)}`}</button>
             ))}
@@ -1615,7 +1622,7 @@ export default function App() {
       const it2 = (QTD_PER[it.per]&&it.per!=="total")
         ? { ...it, log:{ ...(it.log||{}), [hj]: Math.max(0,(Number(it.log&&it.log[hj])||0)+d) } }
         : { ...it, atual: Math.max(0,(Number(it.atual)||0)+d) };
-      const antes = progItemQtd(it).pct, depois = progItemQtd(it2).pct;
+      const antes = progItemQtd(it,arr).pct, depois = progItemQtd(it2,arr).pct;
       patchMetaLocal(m, { qtd_itens: arr.map(x=>x===it?it2:x) }, antes<1&&depois>=1 ? "✅ Meta batida!" : null);
       return;
     }
@@ -2173,13 +2180,13 @@ export default function App() {
                       {md.includes("quantidade")&&(()=>{
                         const q=f.qi, upQi=(k,v)=>{ setFormMeta(x=>({...x,f:{...x.f,qi:{...x.f.qi,[k]:v}}})); setErroGen(e=>({...e,alvoQtd:null,medidores:null})); };
                         const addQi=()=>{ if(!(parseInt(q.alvo)>0)){ setErroGen(e=>({...e,alvoQtd:"Informe o alvo antes de adicionar"})); return; }
-                          setFormMeta(x=>({...x,f:{...x.f,qtdItens:[...x.f.qtdItens,{id:uid(),nome:q.nome.trim(),alvo:parseInt(q.alvo),atual:q.per==="total"?(parseInt(q.atual)||0):0,unidade:q.unidade.trim(),per:q.per,log:{}}],qi:{...qiVazio,per:q.per}}}));
+                          setFormMeta(x=>({...x,f:{...x.f,qtdItens:[...x.f.qtdItens,{id:uid(),nome:q.nome.trim(),alvo:parseInt(q.alvo),atual:q.per==="total"?(parseInt(q.atual)||0):0,unidade:q.unidade.trim(),per:q.per,fonte:q.per==="total"?q.fonte:"",log:{}}],qi:{...qiVazio,per:q.per}}}));
                           setErroGen(e=>({...e,alvoQtd:null})); };
                         return (
                         <div style={{marginBottom:14}}>
                           {f.qtdItens.map((it,i)=>(
                             <div key={it.id||i} style={{display:"flex",alignItems:"center",gap:8,background:"#EAF3EF",border:"1px solid #BFDCD1",borderRadius:10,padding:"8px 10px",marginBottom:6}}>
-                              <span style={{flex:1,fontSize:13,fontWeight:700,color:"#173C33"}}>{it.nome||"Atividade"} · {it.alvo}{it.unidade?" "+it.unidade:""} <span style={{color:"#7A7466",fontWeight:600}}>({QTD_PER[it.per]||"Acumulado"})</span></span>
+                              <span style={{flex:1,fontSize:13,fontWeight:700,color:"#173C33"}}>{it.nome||"Atividade"} · {it.alvo}{it.unidade?" "+it.unidade:""} <span style={{color:"#7A7466",fontWeight:600}}>({QTD_PER[it.per]||"Acumulado"}{it.fonte?" · 🔗 automático":""})</span></span>
                               <button onClick={()=>setFormMeta(x=>({...x,f:{...x.f,qtdItens:x.f.qtdItens.filter((_,k)=>k!==i)}}))} style={{background:"none",border:"none",color:"#B4483C",fontSize:18,cursor:"pointer",lineHeight:1}} aria-label="Remover atividade">×</button>
                             </div>
                           ))}
@@ -2189,6 +2196,16 @@ export default function App() {
                             <label style={FL}>Como contar</label>
                             <Chips opcoes={Object.entries(QTD_PER)} valor={q.per} onChange={v=>upQi("per",v)}/>
                             <div style={{fontSize:11.5,color:"#7A7466",fontWeight:600,margin:"-8px 0 10px",lineHeight:1.45}}>{{total:"Soma tudo até chegar no alvo (ex.: 100 assinantes).",dia:"Renova todo dia (ex.: 100 flexões por dia).",semana:"Renova toda semana, de segunda a domingo.",mes:"Renova todo mês."}[q.per]}</div>
+                            {q.per==="total"&&f.qtdItens.some(x=>x.per!=="total")&&(
+                              <div style={{marginBottom:12}}>
+                                <label style={FL}>Somar automaticamente de</label>
+                                <select style={INP(false)} value={q.fonte} onChange={e=>upQi("fonte",e.target.value)}>
+                                  <option value="">Não — contar à mão</option>
+                                  {f.qtdItens.filter(x=>x.per!=="total").map(x=><option key={x.id} value={x.id}>{x.nome||"Atividade"} ({QTD_PER[x.per]})</option>)}
+                                </select>
+                                {q.fonte&&<div style={{fontSize:11.5,color:"#235448",fontWeight:700,marginTop:6}}>Tudo que você marcar nessa atividade entra neste total sozinho.</div>}
+                              </div>
+                            )}
                             <div style={{display:"grid",gridTemplateColumns:q.per==="total"?"minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr)":"minmax(0,1fr) minmax(0,1.2fr)",gap:8}}>
                               <div><label style={FL}>{q.per==="total"?"Alvo *":`Alvo ${{dia:"por dia",semana:"por semana",mes:"por mês"}[q.per]} *`}</label><input inputMode="numeric" style={INP(erroGen.alvoQtd)} placeholder="100" value={q.alvo} onChange={e=>upQi("alvo",e.target.value.replace(/\D/g,"").slice(0,7))}/></div>
                               {q.per==="total"&&<div><label style={FL}>Atual</label><input inputMode="numeric" style={INP(false)} placeholder="0" value={q.atual} onChange={e=>upQi("atual",e.target.value.replace(/\D/g,"").slice(0,7))}/></div>}
