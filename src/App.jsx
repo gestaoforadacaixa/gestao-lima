@@ -974,7 +974,7 @@ function Prazo({p, m}) {
 function MiniCalendario({m, onDia}) {
   const hj=hoje(), ini=m.data_inicio||(m.criado_em||"").slice(0,10)||hj, fimMeta=m.prazo||hj;
   const marcados = new Set(lerCheckins(m));
-  const [modoMes,setModoMes] = useState(false);
+  const modoMes = false;   // só a semana (sem o mapa do mês inteiro)
   const clamp = d => d<ini?ini:d>fimMeta?fimMeta:d;
   const [ref,setRef] = useState(clamp(hj));            // um dia da semana exibida
   const mesV = ref.slice(0,7);
@@ -1008,7 +1008,6 @@ function MiniCalendario({m, onDia}) {
           );
         })}
       </div>
-      <button onClick={()=>setModoMes(v=>!v)} style={{display:"block",margin:"8px auto 0",background:"none",border:"none",color:"#2E6E5E",fontSize:11.5,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{modoMes?"Mostrar só a semana ▴":"Ver o mês inteiro ▾"}</button>
     </div>
   );
 }
