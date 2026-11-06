@@ -725,6 +725,7 @@ function alvoCalendario(m) {
   const ini = m.data_inicio || (m.criado_em||"").slice(0,10) || hoje();
   if (!m.prazo || m.prazo<ini) return 0;
   const dias = diasEntre(ini, m.prazo) + 1;
+  if (m.cal_freq==="periodo") return Math.min(dias, Math.max(1, Number(m.cal_vezes)||1));
   return m.cal_freq==="semana" ? Math.max(1, Math.ceil(dias/7*(Number(m.cal_vezes)||1))) : dias;
 }
 // Sequência de dias seguidos marcados, contando de hoje (ou de ontem, se hoje ainda não foi marcado)
@@ -741,7 +742,7 @@ function progMedidores(m) {
       return { k, atual, alvo, pct: alvo>0?atual/alvo:0, txt:`${atual} de ${alvo} etapas`, falta: alvo>atual?`falta${alvo-atual>1?"m":""} ${alvo-atual} etapa${alvo-atual>1?"s":""}`:"" }; }
     const ini = m.data_inicio || (m.criado_em||"").slice(0,10) || hoje();
     const ck = lerCheckins(m).filter(d=>d>=ini && (!m.prazo||d<=m.prazo)), alvo=alvoCalendario(m), atual=ck.length;
-    return { k, atual, alvo, pct: alvo>0?atual/alvo:0, txt:`${atual} de ${alvo} dias marcados`, falta: alvo>atual?`faltam ${alvo-atual} dias`:"", seq: sequencia(ck), hojeOk: ck.includes(hoje()) };
+    return { k, atual, alvo, pct: alvo>0?atual/alvo:0, txt:`${atual} de ${alvo} dias marcados`, falta: alvo>atual?`faltam ${alvo-atual} dias${m.cal_freq==="periodo"&&m.prazo&&m.prazo>=hoje()?` · restam ${diasEntre(hoje(),m.prazo)+1} no prazo`:""}`:"", seq: sequencia(ck), hojeOk: ck.includes(hoje()) };
   });
 }
 function progMeta(mt, g) {
@@ -1503,6 +1504,8 @@ export default function App() {
     if(md.includes("quantidade") && !(parseInt(f.alvoQtd)>0)) e.alvoQtd="Informe a quantidade-alvo";
     if(md.includes("etapas") && f.etapas.length===0) e.etapas="Adicione pelo menos uma etapa";
     if(md.includes("calendario") && f.cal_freq==="semana" && !(parseInt(f.cal_vezes)>=1&&parseInt(f.cal_vezes)<=7)) e.cal_vezes="De 1 a 7 vezes";
+    if(md.includes("calendario") && f.cal_freq==="periodo"){ const nd=(f.data_inicio&&f.prazo&&f.prazo>=f.data_inicio)?diasEntre(f.data_inicio,f.prazo)+1:0;
+      if(!(parseInt(f.cal_vezes)>=1)) e.cal_vezes="Informe quantos dias"; else if(nd&&parseInt(f.cal_vezes)>nd) e.cal_vezes=`O período tem só ${nd} dias`; }
     const pat = f.tipo==="patrimonio";
     if(pat && !(parseInt(f.parcelas)>=1 && parseInt(f.parcelas)<=480)) e.parcelas="Informe as parcelas (1 a 480)";
     if(pat && d2float(f.iniDigits)>=d2float(f.alvoDigits) && d2float(f.alvoDigits)>0) e.ini="A entrada deve ser menor que o valor do patrimônio";
@@ -1521,7 +1524,7 @@ export default function App() {
       valor_atual: f.tipo==="valor" ? d2float(f.atualDigits) : qtdAtual,
       medidores: obj ? md : null,
       etapas: md.includes("etapas") ? f.etapas.map(x=>({t:x.t,ok:!!x.ok})) : null,
-      cal_freq: md.includes("calendario") ? f.cal_freq : null, cal_vezes: md.includes("calendario")&&f.cal_freq==="semana" ? parseInt(f.cal_vezes,10) : null,
+      cal_freq: md.includes("calendario") ? f.cal_freq : null, cal_vezes: md.includes("calendario")&&(f.cal_freq==="semana"||f.cal_freq==="periodo") ? parseInt(f.cal_vezes,10) : null,
       data_inicio: T.mensal ? null : (f.data_inicio||null), prazo: T.mensal ? null : pat ? addMesesData(f.data_inicio, parseInt(f.parcelas,10)-1) : (f.prazo||null) };
     if (!ed && md.includes("calendario")) body.checkins = [];
     // Já salva como realizada se tudo estiver em 100%
@@ -2122,13 +2125,25 @@ export default function App() {
                         <div style={{marginBottom:14}}>
                           <div style={{fontSize:12.5,fontWeight:800,color:"#173C33",marginBottom:8}}>📅 Calendário</div>
                           <label style={FL}>Frequência</label>
-                          <Chips opcoes={[["diario","Todos os dias"],["semana","Algumas vezes por semana"]]} valor={f.cal_freq} onChange={v=>up("cal_freq",v)}/>
+                          <Chips opcoes={[["diario","Todos os dias"],["semana","Vezes por semana"],["periodo","Dias no período"]]} valor={f.cal_freq} onChange={v=>up("cal_freq",v)}/>
                           {f.cal_freq==="semana"&&(
                             <div style={{display:"flex",alignItems:"center",gap:10,margin:"-6px 0 10px"}}>
                               <input inputMode="numeric" style={{...INP(erroGen.cal_vezes),width:80,textAlign:"center",fontWeight:800}} value={f.cal_vezes} onChange={e=>up("cal_vezes",e.target.value.replace(/\D/g,"").slice(0,1))}/>
                               <span style={{fontSize:13,fontWeight:700,color:"#444"}}>vezes por semana</span>
                             </div>
                           )}
+                          {f.cal_freq==="periodo"&&(()=>{
+                            const ini=f.data_inicio&&f.data_inicio>hoje()?f.data_inicio:hoje(), restam=f.prazo&&f.prazo>=ini?diasEntre(ini,f.prazo)+1:0, n=parseInt(f.cal_vezes)||0;
+                            return (
+                            <div style={{margin:"-6px 0 10px"}}>
+                              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                                <span style={{fontSize:13,fontWeight:700,color:"#444"}}>Cumprir em</span>
+                                <input inputMode="numeric" style={{...INP(erroGen.cal_vezes),width:90,textAlign:"center",fontWeight:800}} value={f.cal_vezes} onChange={e=>up("cal_vezes",e.target.value.replace(/\D/g,"").slice(0,3))}/>
+                                <span style={{fontSize:13,fontWeight:700,color:"#444"}}>dias, quando quiser</span>
+                              </div>
+                              {restam>0&&n>0&&<div style={{fontSize:11.5,color:"#7A7466",fontWeight:700,marginTop:8}}>Restam {restam} dia{restam>1?"s":""} até o prazo · você precisa marcar {Math.min(n,restam)} (≈ {(Math.min(n,restam)/restam*7).toFixed(1).replace(".",",")} por semana).</div>}
+                            </div>);
+                          })()}
                           <ErrTxt msg={erroGen.cal_vezes}/>
                           <div style={{fontSize:11.5,color:"#235448",fontWeight:700,background:"#EAF3EF",borderRadius:10,padding:"9px 12px"}}>
                             {diasCal>0 ? `Meta: marcar ${diasCal} dia${diasCal>1?"s":""} entre ${fmtDate(f.data_inicio)} e ${fmtDate(f.prazo)}. Cada dia marcado avança a meta e conta para a sequência 🔥.` : "Defina o início e o prazo abaixo para calcular quantos dias marcar."}
