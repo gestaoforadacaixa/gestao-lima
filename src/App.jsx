@@ -974,15 +974,24 @@ function Prazo({p, m}) {
 function MiniCalendario({m, onDia}) {
   const hj=hoje(), ini=m.data_inicio||(m.criado_em||"").slice(0,10)||hj, fimMeta=m.prazo||hj;
   const marcados = new Set(lerCheckins(m));
-  const [mesV,setMesV] = useState(hj.slice(0,7)>fimMeta.slice(0,7)?fimMeta.slice(0,7):hj.slice(0,7)<ini.slice(0,7)?ini.slice(0,7):hj.slice(0,7));
+  const [modoMes,setModoMes] = useState(false);
+  const clamp = d => d<ini?ini:d>fimMeta?fimMeta:d;
+  const [ref,setRef] = useState(clamp(hj));            // um dia da semana exibida
+  const mesV = ref.slice(0,7);
   const [y,mo] = mesV.split("-").map(Number), nDias=new Date(y,mo,0).getDate(), pad=new Date(y,mo-1,1).getDay();
-  const podeAnt = mAdd(mesV,-1)>=ini.slice(0,7), podeProx = mAdd(mesV,1)<=fimMeta.slice(0,7);
-  const cel = [...Array(pad).fill(null), ...Array.from({length:nDias},(_,i)=>`${mesV}-${String(i+1).padStart(2,"0")}`)];
-  const nb = (ok,dir,txt)=><button onClick={()=>ok&&setMesV(mAdd(mesV,dir))} disabled={!ok} style={{background:"none",border:"none",fontSize:16,color:ok?"#173C33":"#DDD",cursor:ok?"pointer":"default",padding:"0 8px"}}>{txt}</button>;
+  const dow = new Date(...ref.split("-").map((v,i)=>i===1?v-1:+v)).getDay(), semIni = addDias(ref,-dow);
+  const podeAnt = modoMes ? mAdd(mesV,-1)>=ini.slice(0,7) : addDias(semIni,-1)>=ini;
+  const podeProx = modoMes ? mAdd(mesV,1)<=fimMeta.slice(0,7) : addDias(semIni,7)<=fimMeta;
+  const ir = dir => setRef(r => modoMes ? clamp(`${mAdd(r.slice(0,7),dir)}-01`<ini?ini:`${mAdd(r.slice(0,7),dir)}-01`) : addDias(r,7*dir));
+  const cel = modoMes
+    ? [...Array(pad).fill(null), ...Array.from({length:nDias},(_,i)=>`${mesV}-${String(i+1).padStart(2,"0")}`)]
+    : Array.from({length:7},(_,i)=>addDias(semIni,i));
+  const rotulo = modoMes ? `${MESES_NOMES_FULL[mo-1]} ${y}` : `${fmtDate(cel[0])} – ${fmtDate(cel[6])}`;
+  const nb = (ok,dir,txt)=><button onClick={()=>ok&&ir(dir)} disabled={!ok} style={{background:"none",border:"none",fontSize:16,color:ok?"#173C33":"#DDD",cursor:ok?"pointer":"default",padding:"0 8px"}}>{txt}</button>;
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
-        {nb(podeAnt,-1,"‹")}<span style={{fontSize:12,fontWeight:800,color:"#173C33"}}>{MESES_NOMES_FULL[mo-1]} {y}</span>{nb(podeProx,1,"›")}
+        {nb(podeAnt,-1,"‹")}<span style={{fontSize:12,fontWeight:800,color:"#173C33"}}>{rotulo}</span>{nb(podeProx,1,"›")}
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",gap:3}}>
         {["D","S","T","Q","Q","S","S"].map((d,i)=><div key={i} style={{fontSize:9,fontWeight:800,color:"#A39C8A",textAlign:"center"}}>{d}</div>)}
@@ -991,7 +1000,7 @@ function MiniCalendario({m, onDia}) {
           const dentro = d>=ini && d<=fimMeta, passado = d<=hj, ok = marcados.has(d), clicavel = dentro && passado && !!onDia;
           return (
             <button key={i} onClick={()=>clicavel&&onDia(m,d)} disabled={!clicavel}
-              style={{aspectRatio:"1",borderRadius:8,border:d===hj?"2px solid #173C33":"1px solid "+(ok?"#2E6E5E":"#F0EEE6"),
+              style={{aspectRatio:modoMes?"1":"auto",height:modoMes?"auto":34,borderRadius:8,border:d===hj?"2px solid #173C33":"1px solid "+(ok?"#2E6E5E":"#F0EEE6"),
                 background:ok?"#2E6E5E":dentro?(passado?"#FAF9F6":"#fff"):"#F4F2ED",color:ok?"#fff":dentro?"#173C33":"#CCCCCC",
                 fontSize:11,fontWeight:800,cursor:clicavel?"pointer":"default",padding:0,fontFamily:"'Inter',sans-serif",opacity:dentro?1:0.5}}>
               {ok?"✓":parseInt(d.slice(8),10)}
@@ -999,6 +1008,7 @@ function MiniCalendario({m, onDia}) {
           );
         })}
       </div>
+      <button onClick={()=>setModoMes(v=>!v)} style={{display:"block",margin:"8px auto 0",background:"none",border:"none",color:"#2E6E5E",fontSize:11.5,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{modoMes?"Mostrar só a semana ▴":"Ver o mês inteiro ▾"}</button>
     </div>
   );
 }
@@ -1006,24 +1016,24 @@ function BlocoMedidor({m, x, onQtd, onEtapa, onDia}) {
   const M = MEDIDORES[x.k], cor = x.pct>=1 ? "#2E6E5E" : "#2E6E5E";
   return (
     <div style={{border:"1px solid #F0EEE6",borderRadius:12,padding:"10px 12px",marginTop:10}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:6}}>
-        <span style={{fontSize:12.5,fontWeight:800,color:"#173C33",display:"inline-flex",alignItems:"center",gap:8}}>{M.icone} {M.nome}
-        </span>
-        <span style={{fontSize:11.5,fontWeight:800,color:x.pct>=1?"#235448":"#666"}}>{x.txt} · {Math.round(Math.min(1,x.pct)*100)}%</span>
-      </div>
-      <Bar percent={x.pct*100} color={cor}/>
-      {x.k==="quantidade"&&x.itens.map(it=>(
-        <div key={it.id} style={{marginTop:10,borderTop:x.itens.length>1?"1px solid #F0EEE6":"none",paddingTop:x.itens.length>1?10:0}}>
-          {x.itens.length>1&&<>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:6}}>
-              <span style={{fontSize:12.5,fontWeight:800,color:"#173C33"}}>{it.nome||"Atividade"}</span>
-              <span style={{fontSize:11.5,fontWeight:800,color:it.pct>=1?"#235448":"#666"}}>{it.txt} · {Math.round(Math.min(1,it.pct)*100)}%</span>
-            </div>
-            <Bar percent={it.pct*100} color={cor}/>
-          </>}
+      {x.k!=="quantidade"&&<>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:6}}>
+          <span style={{fontSize:12.5,fontWeight:800,color:"#173C33",display:"inline-flex",alignItems:"center",gap:8}}>{M.icone} {M.nome}
+          </span>
+          <span style={{fontSize:11.5,fontWeight:800,color:x.pct>=1?"#235448":"#666"}}>{x.txt} · {Math.round(Math.min(1,x.pct)*100)}%</span>
+        </div>
+        <Bar percent={x.pct*100} color={cor}/>
+      </>}
+      {x.k==="quantidade"&&x.itens.map((it,ix)=>(
+        <div key={it.id} style={{marginTop:ix>0?12:0,borderTop:ix>0?"1px solid #F0EEE6":"none",paddingTop:ix>0?12:0}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:6}}>
+            <span style={{fontSize:12.5,fontWeight:800,color:"#173C33"}}>🔢 {it.nome||"Atividade"}</span>
+            <span style={{fontSize:11.5,fontWeight:800,color:it.pct>=1?"#235448":"#666"}}>{it.txt} · {Math.round(Math.min(1,it.pct)*100)}%</span>
+          </div>
+          <Bar percent={it.pct*100} color={cor}/>
           {it.extra&&<div style={{fontSize:11,fontWeight:700,color:"#A39C8A",marginTop:6}}>🔁 {it.extra}</div>}
           {onQtd&&<div style={{display:"flex",gap:8,marginTop:8}}>
-            {(it.alvo>=50?[-1,1,5,10]:[-1,1]).map(d=>(
+            {[-1,1,5,10,50].map(d=>(
               <button key={d} onClick={()=>onQtd(m,d,it.id)} style={{flex:1,border:`2px solid ${d>0?"#2E6E5E":"#E3DFD3"}`,background:d>0?"#EAF3EF":"#fff",color:d>0?"#235448":"#666",borderRadius:10,padding:"8px 4px",fontSize:15,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{d>0?`+ ${d}`:`− ${Math.abs(d)}`}</button>
             ))}
           </div>}
