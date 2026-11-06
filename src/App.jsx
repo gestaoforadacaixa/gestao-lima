@@ -717,6 +717,36 @@ const lerJson = (v, padrao) => { let e=v; if(typeof e==="string"){ try{ e=JSON.p
 const lerEtapas = m => { const e=lerJson(m.etapas, []); return Array.isArray(e)?e:[]; };
 const lerCheckins = m => { const e=lerJson(m.checkins, []); return Array.isArray(e)?[...new Set(e)].sort():[]; };
 const medidoresDe = m => { const md=lerJson(m.medidores, null); if(Array.isArray(md)&&md.length) return md.filter(k=>MEDIDORES[k]); return (m.tipo==="quantidade"||m.tipo==="etapas") ? [m.tipo] : []; };
+// Quantidade por período: acumulado (total) ou renovada todo dia / semana / mês
+const QTD_PER = { total:"Acumulado", dia:"Por dia", semana:"Por semana", mes:"Por mês" };
+const qtdPer = m => QTD_PER[m.qtd_per] ? m.qtd_per : "total";
+const lerLog = m => { const e=lerJson(m.qtd_log, {}); return e && typeof e==="object" && !Array.isArray(e) ? e : {}; };
+const iniPeriodo = (per, d) => { if(per==="mes") return d.slice(0,7)+"-01"; if(per==="semana"){ const [y,mo,dd]=d.split("-").map(Number); const w=new Date(y,mo-1,dd).getDay(); return addDias(d, -((w+6)%7)); } return d; };
+const qiVazio = { nome:"", alvo:"", atual:"", unidade:"", per:"total" };
+// Uma meta pode ter várias atividades com quantidade (ex.: 100 flexões por dia + 2 copos de água por dia)
+const qtdItens = m => {
+  const a = lerJson(m.qtd_itens, []);
+  if (Array.isArray(a) && a.length) return a.filter(x=>x&&typeof x==="object");
+  const alvo = Number(m.valor_alvo)||0;
+  return alvo>0 && medidoresDe(m).includes("quantidade") ? [{ id:"legacy", nome:"", alvo, atual:Number(m.valor_atual)||0, unidade:m.unidade||"", per:qtdPer(m), log:lerLog(m) }] : [];
+};
+const itensDoForm = f => { const q=f.qi, rasc = parseInt(q.alvo)>0 ? [{ id:"rasc", nome:q.nome.trim(), alvo:parseInt(q.alvo), atual:q.per==="total"?(parseInt(q.atual)||0):0, unidade:q.unidade.trim(), per:q.per, log:{} }] : []; return [...f.qtdItens, ...rasc]; };
+function progItemQtd(it) {
+  const per = QTD_PER[it.per] ? it.per : "total", alvo = Number(it.alvo)||0, hj = hoje();
+  const n = v => Math.round(v).toLocaleString("pt-BR"), un = it.unidade ? " "+it.unidade : "";
+  let atual, rot="", extra="";
+  if (per==="total") atual = Number(it.atual)||0;
+  else {
+    const log = it.log && typeof it.log==="object" ? it.log : {}, ini = iniPeriodo(per,hj);
+    atual = Object.entries(log).filter(([d])=>d>=ini&&d<=hj).reduce((s,[,v])=>s+(Number(v)||0),0);
+    const grupos = {}; Object.entries(log).forEach(([d,v])=>{ const c=iniPeriodo(per,d); grupos[c]=(grupos[c]||0)+(Number(v)||0); });
+    const bat = Object.values(grupos).filter(v=>alvo>0&&v>=alvo).length, u = {dia:["dia","dias"],semana:["semana","semanas"],mes:["mês","meses"]}[per];
+    rot = {dia:"hoje",semana:"nesta semana",mes:"neste mês"}[per];
+    extra = `${QTD_PER[per]} · ${bat} ${bat===1?u[0]:u[1]} com a meta batida`;
+  }
+  return { id:it.id, nome:it.nome||"", per, recorr:per!=="total", atual, alvo, pct: alvo>0?atual/alvo:0,
+    txt:`${n(atual)} de ${n(alvo)}${un}${rot?" "+rot:""}`, falta: alvo>atual?`${it.nome?it.nome+": ":""}faltam ${n(alvo-atual)}${un}${rot?" "+rot:""}`:"", extra };
+}
 const fmtQtd = (m, v) => `${Math.round(v).toLocaleString("pt-BR")}${m.unidade?" "+m.unidade:""}`;
 const fmtMeta = (m, v) => tipoMeta(m.tipo)==="objetiva" ? `${Math.round(v)}%` : fmt(v);
 const fracMes = () => { const h=hoje(), [y,m,d]=h.split("-").map(Number); return d/new Date(y,m,0).getDate(); };
@@ -736,8 +766,12 @@ function sequencia(lista) {
 // Progresso de cada medidor da meta objetiva
 function progMedidores(m) {
   return medidoresDe(m).map(k=>{
-    if (k==="quantidade") { const alvo=Number(m.valor_alvo)||0, atual=Number(m.valor_atual)||0;
-      return { k, atual, alvo, pct: alvo>0?atual/alvo:0, txt:`${fmtQtd(m,atual)} de ${fmtQtd(m,alvo)}`, falta: alvo>atual?`faltam ${fmtQtd(m,alvo-atual)}`:"" }; }
+    if (k==="quantidade") {
+      const its = qtdItens(m).map(progItemQtd), pct = its.length ? its.reduce((s,x)=>s+Math.min(1,x.pct),0)/its.length : 0, bat = its.filter(x=>x.pct>=1).length;
+      return { k, itens:its, recorr:its.some(x=>x.recorr), atual:bat, alvo:its.length, pct,
+        txt: its.length===1 ? `${its[0].nome?its[0].nome+": ":""}${its[0].txt}` : `${its.length} atividades · ${bat} no alvo`,
+        falta: its.map(x=>x.falta).filter(Boolean).join(" · ") };
+    }
     if (k==="etapas") { const e=lerEtapas(m), alvo=e.length, atual=e.filter(x=>x.ok).length;
       return { k, atual, alvo, pct: alvo>0?atual/alvo:0, txt:`${atual} de ${alvo} etapas`, falta: alvo>atual?`falta${alvo-atual>1?"m":""} ${alvo-atual} etapa${alvo-atual>1?"s":""}`:"" }; }
     const ini = m.data_inicio || (m.criado_em||"").slice(0,10) || hoje();
@@ -793,7 +827,7 @@ function progMeta(mt, g) {
   if (realizada) status = {...OK, txt:"realizada"};
   else if (tipo==="limite") status = pct>1 ? {...CR,txt:"estourou"} : pct>fracMes()+0.1 ? {...AT,txt:"gastando rápido"} : {...OK,txt:"dentro do limite"};
   else if (tipo==="faturamento" && pct>=1) status = {...OK, txt:"batida no mês"};
-  else if (pct>=1) status = {...OK, txt:"alvo atingido"};
+  else if (pct>=1) status = {...OK, txt: meds&&meds.some(x=>x.recorr) ? "meta do período batida" : "alvo atingido"};
   else if (tipo==="patrimonio" && patr.esperado-patr.pagas>=1) { const at=patr.esperado-patr.pagas; status = at>=2 ? {...CR,txt:`${at} parcelas em aberto`} : {...AT,txt:"1 parcela em aberto"}; }
   else if (tipo==="patrimonio") status = {...OK, txt:"em dia"};
   else if (diasRest!=null && diasRest<0) status = {...CR, txt:"atrasada"};
@@ -801,10 +835,11 @@ function progMeta(mt, g) {
     let esperado = null;
     const ini = mt.data_inicio || (mt.criado_em||"").slice(0,10);
     if (tipo==="faturamento") esperado = fracMes();
+    else if (meds&&meds.some(x=>x.recorr)) esperado = null;
     else if (mt.prazo && ini && mt.prazo>ini) esperado = Math.min(1, Math.max(0, diasEntre(ini,hj)/diasEntre(ini,mt.prazo)));
     status = esperado!=null && pct < esperado-0.15 ? {...AT,txt:"abaixo do ritmo"} : {...OK,txt:"no ritmo"};
   }
-  return { tipo, atual, alvo, pct, status, detalhe, dica, diasRest, mensal:!!T.mensal, realizada, meds, patr };
+  return { tipo, atual, alvo, pct, status, detalhe, dica, diasRest, mensal:!!T.mensal, realizada, meds, patr, recorr: !!(meds&&meds.some(x=>x.recorr)) };
 }
 // Central de alertas
 function gerarAlertas(g, metas) {
@@ -968,17 +1003,28 @@ function BlocoMedidor({m, x, onQtd, onEtapa, onDia}) {
   return (
     <div style={{border:"1px solid #F0EEE6",borderRadius:12,padding:"10px 12px",marginTop:10}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:6}}>
-        <span style={{fontSize:12.5,fontWeight:800,color:"#173C33"}}>{M.icone} {M.nome}</span>
+        <span style={{fontSize:12.5,fontWeight:800,color:"#173C33",display:"inline-flex",alignItems:"center",gap:8}}>{M.icone} {M.nome}
+        </span>
         <span style={{fontSize:11.5,fontWeight:800,color:x.pct>=1?"#235448":"#666"}}>{x.txt} · {Math.round(Math.min(1,x.pct)*100)}%</span>
       </div>
       <Bar percent={x.pct*100} color={cor}/>
-      {x.k==="quantidade"&&onQtd&&(
-        <div style={{display:"flex",gap:8,marginTop:10}}>
-          {[-1,1].map(d=>(
-            <button key={d} onClick={()=>onQtd(m,d)} style={{flex:1,border:`2px solid ${d>0?"#2E6E5E":"#E3DFD3"}`,background:d>0?"#EAF3EF":"#fff",color:d>0?"#235448":"#666",borderRadius:10,padding:"8px",fontSize:15,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{d>0?"+ 1":"− 1"}</button>
-          ))}
+      {x.k==="quantidade"&&x.itens.map(it=>(
+        <div key={it.id} style={{marginTop:10,borderTop:x.itens.length>1?"1px solid #F0EEE6":"none",paddingTop:x.itens.length>1?10:0}}>
+          {x.itens.length>1&&<>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:6}}>
+              <span style={{fontSize:12.5,fontWeight:800,color:"#173C33"}}>{it.nome||"Atividade"}</span>
+              <span style={{fontSize:11.5,fontWeight:800,color:it.pct>=1?"#235448":"#666"}}>{it.txt} · {Math.round(Math.min(1,it.pct)*100)}%</span>
+            </div>
+            <Bar percent={it.pct*100} color={cor}/>
+          </>}
+          {it.extra&&<div style={{fontSize:11,fontWeight:700,color:"#A39C8A",marginTop:6}}>🔁 {it.extra}</div>}
+          {onQtd&&<div style={{display:"flex",gap:8,marginTop:8}}>
+            {(it.alvo>=50?[-1,1,5,10]:[-1,1]).map(d=>(
+              <button key={d} onClick={()=>onQtd(m,d,it.id)} style={{flex:1,border:`2px solid ${d>0?"#2E6E5E":"#E3DFD3"}`,background:d>0?"#EAF3EF":"#fff",color:d>0?"#235448":"#666",borderRadius:10,padding:"8px 4px",fontSize:15,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>{d>0?`+ ${d}`:`− ${Math.abs(d)}`}</button>
+            ))}
+          </div>}
         </div>
-      )}
+      ))}
       {x.k==="etapas"&&(
         <div style={{marginTop:10,display:"flex",flexDirection:"column",gap:4}}>
           {lerEtapas(m).map((e,i)=>(
@@ -1486,14 +1532,14 @@ export default function App() {
   // ─── Metas ───
   const baseMeta = grupo => ({ grupo, tipo: grupo==="financeira"?"faturamento":"objetiva", medidores: grupo==="objetiva"?["quantidade"]:[],
     nome:"", descricao:"", centro:"pessoal", categoria:"", unidade:"",
-    iniDigits:"", alvoDigits:"", atualDigits:"", parcelas:"", alvoQtd:"", atualQtd:"", etapas:[], novaEtapa:"", cal_freq:"diario", cal_vezes:"3", data_inicio:hoje(), prazo:"" });
+    iniDigits:"", alvoDigits:"", atualDigits:"", parcelas:"", qtdItens:[], qi:{...qiVazio}, etapas:[], novaEtapa:"", cal_freq:"diario", cal_vezes:"3", data_inicio:hoje(), prazo:"" });
   const novaMeta = grupo => { setErroGen({}); setFormMeta({ f: baseMeta(grupo) }); };
   const editarMeta = m => {
     const t=tipoMeta(m.tipo), g=TIPOS_META[t].grupo, n=x=>Number(x)||0, md=medidoresDe(m);
     setErroGen({}); setMetaTab("nova");
     setFormMeta({ item:m, f:{ ...baseMeta(g), tipo:t, medidores: g==="objetiva"?(md.length?md:["quantidade"]):[], nome:m.nome||"", descricao:m.descricao||"", centro:"pessoal", categoria:m.categoria||"", unidade:m.unidade||"",
       iniDigits:n(m.valor_inicial)?float2d(n(m.valor_inicial)):"", alvoDigits:g==="financeira"&&n(m.valor_alvo)?float2d(n(m.valor_alvo)):"", atualDigits:t==="valor"&&n(m.valor_atual)?float2d(n(m.valor_atual)):"",
-      parcelas:m.parcelas?String(m.parcelas):"", alvoQtd:md.includes("quantidade")?String(n(m.valor_alvo)):"", atualQtd:md.includes("quantidade")?String(n(m.valor_atual)):"", etapas:lerEtapas(m),
+      parcelas:m.parcelas?String(m.parcelas):"", qtdItens: md.includes("quantidade") ? qtdItens(m).map(it=>({...it,id:it.id==="legacy"?uid():it.id})) : [], etapas:lerEtapas(m),
       cal_freq:m.cal_freq||"diario", cal_vezes:String(m.cal_vezes||3), data_inicio:m.data_inicio||hoje(), prazo:m.prazo||"" } });
   };
   const salvarMeta = async () => {
@@ -1501,7 +1547,7 @@ export default function App() {
     if(!f.nome.trim()) e.nome="Dê um nome para a meta";
     if(T.grupo==="financeira" && (!f.alvoDigits||parseInt(f.alvoDigits)===0)) e.alvo="Informe o valor";
     if(obj && md.length===0) e.medidores="Escolha pelo menos um medidor";
-    if(md.includes("quantidade") && !(parseInt(f.alvoQtd)>0)) e.alvoQtd="Informe a quantidade-alvo";
+    if(md.includes("quantidade") && itensDoForm(f).length===0) e.alvoQtd="Informe o alvo e toque em Adicionar";
     if(md.includes("etapas") && f.etapas.length===0) e.etapas="Adicione pelo menos uma etapa";
     if(md.includes("calendario") && f.cal_freq==="semana" && !(parseInt(f.cal_vezes)>=1&&parseInt(f.cal_vezes)<=7)) e.cal_vezes="De 1 a 7 vezes";
     if(md.includes("calendario") && f.cal_freq==="periodo"){ const nd=(f.data_inicio&&f.prazo&&f.prazo>=f.data_inicio)?diasEntre(f.data_inicio,f.prazo)+1:0;
@@ -1515,14 +1561,13 @@ export default function App() {
     if(!pat && f.prazo && f.data_inicio && f.prazo<f.data_inicio) e.prazo="O prazo deve ser depois do início";
     if(Object.keys(e).length){ setErroGen(e); return; }
     const ed = formMeta.item;
-    const qtdAlvo = md.includes("quantidade") ? parseInt(f.alvoQtd,10) : 0, qtdAtual = md.includes("quantidade") ? (parseInt(f.atualQtd,10)||0) : 0;
     const body = { nome:f.nome.trim(), descricao:f.descricao.trim(), grupo:T.grupo, tipo:f.tipo, centro:"pessoal",
-      categoria: f.tipo==="limite"&&f.categoria ? f.categoria : null, unidade: pat ? (BENS[f.unidade]?f.unidade:"veiculo") : md.includes("quantidade") ? f.unidade.trim() : null,
+      categoria: f.tipo==="limite"&&f.categoria ? f.categoria : null, unidade: pat ? (BENS[f.unidade]?f.unidade:"veiculo") : null,
       parcelas: pat ? parseInt(f.parcelas,10) : null,
       valor_inicial: (f.tipo==="acumular"||pat) ? d2float(f.iniDigits) : 0,
-      valor_alvo: T.grupo==="financeira" ? d2float(f.alvoDigits) : qtdAlvo,
-      valor_atual: f.tipo==="valor" ? d2float(f.atualDigits) : qtdAtual,
-      medidores: obj ? md : null,
+      valor_alvo: T.grupo==="financeira" ? d2float(f.alvoDigits) : 0,
+      valor_atual: f.tipo==="valor" ? d2float(f.atualDigits) : 0,
+      medidores: obj ? md : null, qtd_itens: md.includes("quantidade") ? itensDoForm(f).map(it=>({...it,id:it.id==="rasc"?uid():it.id})) : null, qtd_per: null, qtd_log: null,
       etapas: md.includes("etapas") ? f.etapas.map(x=>({t:x.t,ok:!!x.ok})) : null,
       cal_freq: md.includes("calendario") ? f.cal_freq : null, cal_vezes: md.includes("calendario")&&(f.cal_freq==="semana"||f.cal_freq==="periodo") ? parseInt(f.cal_vezes,10) : null,
       data_inicio: T.mensal ? null : (f.data_inicio||null), prazo: T.mensal ? null : pat ? addMesesData(f.data_inicio, parseInt(f.parcelas,10)-1) : (f.prazo||null) };
@@ -1542,13 +1587,29 @@ export default function App() {
     const ok = await tbPatch("metas", m.id, body);
     if(!ok){ setMetas(ms => ms.map(x => x.id===m.id ? m : x)); showToast("⚠ Não salvou"); return; }
     const depois = progMeta(novo, glob);
-    if(!m.concluida_em && !depois.mensal && depois.pct>=1){
+    if(!m.concluida_em && !depois.mensal && !depois.recorr && depois.pct>=1){
       await tbPatch("metas", m.id, { concluida_em: hoje() });
       setMetas(ms => ms.map(x => x.id===m.id ? { ...novo, concluida_em: hoje() } : x));
       showToast("🏆 Meta realizada! Parabéns!");
     } else if (msgFeita) showToast(msgFeita);
   };
-  const ajustarQtd = (m, d) => { const v = Math.max(0, (Number(m.valor_atual)||0) + d); patchMetaLocal(m, { valor_atual: v }); };
+  const ajustarQtd = (m, d, id) => {
+    const arr = lerJson(m.qtd_itens, []);
+    if (Array.isArray(arr) && arr.length) {
+      const hj = hoje(), it = arr.find(x=>x.id===id) || arr[0];
+      const it2 = (QTD_PER[it.per]&&it.per!=="total")
+        ? { ...it, log:{ ...(it.log||{}), [hj]: Math.max(0,(Number(it.log&&it.log[hj])||0)+d) } }
+        : { ...it, atual: Math.max(0,(Number(it.atual)||0)+d) };
+      const antes = progItemQtd(it).pct, depois = progItemQtd(it2).pct;
+      patchMetaLocal(m, { qtd_itens: arr.map(x=>x===it?it2:x) }, antes<1&&depois>=1 ? "✅ Meta batida!" : null);
+      return;
+    }
+    // metas antigas (uma quantidade só, nos campos antigos)
+    if (qtdPer(m)==="total") { const v = Math.max(0, (Number(m.valor_atual)||0) + d); patchMetaLocal(m, { valor_atual: v }); return; }
+    const l=lerLog(m), hj=hoje(), v=Math.max(0,(Number(l[hj])||0)+d), antes=progMeta(m,glob).pct;
+    const novo={...m, qtd_log:{...l,[hj]:v}}, depois=progMeta(novo,glob).pct;
+    patchMetaLocal(m, { qtd_log:{...l,[hj]:v} }, antes<1&&depois>=1 ? "✅ Meta do período batida!" : null);
+  };
   const alternarDia = (m, d) => { const l=lerCheckins(m), tem=l.includes(d), nova = tem ? l.filter(x=>x!==d) : [...l, d].sort();
     patchMetaLocal(m, { checkins: nova }, tem ? null : (d===hoje() ? `🔥 Dia marcado! ${sequencia([...nova].filter(x=>x<=hoje()))} seguido(s)` : "✓ Dia marcado")); };
   const alternarEtapa = (m, i) => { const e = lerEtapas(m).map((x,k)=> k===i ? { ...x, ok:!x.ok } : x); patchMetaLocal(m, { etapas: e }, e[i].ok ? "✓ Etapa concluída" : null); };
@@ -2014,8 +2075,8 @@ export default function App() {
                 const obj = f.tipo==="objetiva", md = obj ? f.medidores : [], pat = f.tipo==="patrimonio", bem = BENS[f.unidade]?f.unidade:"veiculo";
                 const alternarMedidor = k => { setFormMeta(x=>{ const l=x.f.medidores; return {...x,f:{...x.f,medidores: l.includes(k)?l.filter(y=>y!==k):[...l,k]}}; }); setErroGen(e=>({...e,medidores:null})); };
                 const previa = (()=>{ const mt={ id:ed?ed.id:"previa", parcelas:parseInt(f.parcelas)||0, nome:f.nome||"Nome da meta", tipo:f.tipo, centro:"pessoal", categoria:f.categoria||null, unidade:f.tipo==="patrimonio"?bem:f.unidade, medidores:md,
-                  valor_inicial:d2float(f.iniDigits), valor_alvo: T.grupo==="financeira"?d2float(f.alvoDigits):(parseInt(f.alvoQtd)||0),
-                  valor_atual: f.tipo==="valor"?d2float(f.atualDigits):(parseInt(f.atualQtd)||0), etapas:f.etapas, checkins: ed ? ed.checkins : [],
+                  valor_inicial:d2float(f.iniDigits), valor_alvo: T.grupo==="financeira"?d2float(f.alvoDigits):0,
+                  valor_atual: f.tipo==="valor"?d2float(f.atualDigits):0, qtd_itens: md.includes("quantidade") ? itensDoForm(f) : null, etapas:f.etapas, checkins: ed ? ed.checkins : [],
                   cal_freq:f.cal_freq, cal_vezes:parseInt(f.cal_vezes)||1, data_inicio:f.data_inicio, prazo:f.tipo==="patrimonio"&&parseInt(f.parcelas)>0&&f.data_inicio?addMesesData(f.data_inicio,parseInt(f.parcelas)-1):f.prazo, criado_em:hoje() };
                   return { mt, p: progMeta(mt, glob) }; })();
                 const diasCal = f.prazo&&f.data_inicio&&f.prazo>=f.data_inicio ? alvoCalendario({data_inicio:f.data_inicio,prazo:f.prazo,cal_freq:f.cal_freq,cal_vezes:parseInt(f.cal_vezes)||1}) : 0;
@@ -2093,15 +2154,36 @@ export default function App() {
                         </div>
                       )}
                       {f.tipo==="valor"&&<CampoValor label="Quanto já tem hoje" digits={f.atualDigits} onChange={v=>up("atualDigits",v)} cor="#235448"/>}
-                      {md.includes("quantidade")&&<div style={{fontSize:12.5,fontWeight:800,color:"#173C33",marginBottom:8}}>🔢 Quantidade</div>}
-                      {md.includes("quantidade")&&(
-                        <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr)",gap:8,marginBottom:14}}>
-                          <div><label style={FL}>Alvo *</label><input inputMode="numeric" style={INP(erroGen.alvoQtd)} placeholder="100" value={f.alvoQtd} onChange={e=>up("alvoQtd",e.target.value.replace(/\D/g,"").slice(0,7))}/></div>
-                          <div><label style={FL}>Atual</label><input inputMode="numeric" style={INP(false)} placeholder="0" value={f.atualQtd} onChange={e=>up("atualQtd",e.target.value.replace(/\D/g,"").slice(0,7))}/></div>
-                          <div><label style={FL}>Unidade</label><input style={INP(false)} placeholder="assinantes" value={f.unidade} onChange={e=>up("unidade",e.target.value.slice(0,20))}/></div>
-                          <div style={{gridColumn:"1 / -1"}}><ErrTxt msg={erroGen.alvoQtd}/></div>
-                        </div>
-                      )}
+                      {md.includes("quantidade")&&<div style={{fontSize:12.5,fontWeight:800,color:"#173C33",marginBottom:8}}>🔢 Quantidade · uma ou mais atividades</div>}
+                      {md.includes("quantidade")&&(()=>{
+                        const q=f.qi, upQi=(k,v)=>{ setFormMeta(x=>({...x,f:{...x.f,qi:{...x.f.qi,[k]:v}}})); setErroGen(e=>({...e,alvoQtd:null,medidores:null})); };
+                        const addQi=()=>{ if(!(parseInt(q.alvo)>0)){ setErroGen(e=>({...e,alvoQtd:"Informe o alvo antes de adicionar"})); return; }
+                          setFormMeta(x=>({...x,f:{...x.f,qtdItens:[...x.f.qtdItens,{id:uid(),nome:q.nome.trim(),alvo:parseInt(q.alvo),atual:q.per==="total"?(parseInt(q.atual)||0):0,unidade:q.unidade.trim(),per:q.per,log:{}}],qi:{...qiVazio,per:q.per}}}));
+                          setErroGen(e=>({...e,alvoQtd:null})); };
+                        return (
+                        <div style={{marginBottom:14}}>
+                          {f.qtdItens.map((it,i)=>(
+                            <div key={it.id||i} style={{display:"flex",alignItems:"center",gap:8,background:"#EAF3EF",border:"1px solid #BFDCD1",borderRadius:10,padding:"8px 10px",marginBottom:6}}>
+                              <span style={{flex:1,fontSize:13,fontWeight:700,color:"#173C33"}}>{it.nome||"Atividade"} · {it.alvo}{it.unidade?" "+it.unidade:""} <span style={{color:"#7A7466",fontWeight:600}}>({QTD_PER[it.per]||"Acumulado"})</span></span>
+                              <button onClick={()=>setFormMeta(x=>({...x,f:{...x.f,qtdItens:x.f.qtdItens.filter((_,k)=>k!==i)}}))} style={{background:"none",border:"none",color:"#B4483C",fontSize:18,cursor:"pointer",lineHeight:1}} aria-label="Remover atividade">×</button>
+                            </div>
+                          ))}
+                          <div style={{background:"#FAF9F6",border:"1px solid #F0EEE6",borderRadius:12,padding:12}}>
+                            <label style={FL}>Atividade</label>
+                            <input style={{...INP(false),marginBottom:12}} placeholder="Ex: Flexões, Copos de água" value={q.nome} onChange={e=>upQi("nome",e.target.value.slice(0,40))}/>
+                            <label style={FL}>Como contar</label>
+                            <Chips opcoes={Object.entries(QTD_PER)} valor={q.per} onChange={v=>upQi("per",v)}/>
+                            <div style={{fontSize:11.5,color:"#7A7466",fontWeight:600,margin:"-8px 0 10px",lineHeight:1.45}}>{{total:"Soma tudo até chegar no alvo (ex.: 100 assinantes).",dia:"Renova todo dia (ex.: 100 flexões por dia).",semana:"Renova toda semana, de segunda a domingo.",mes:"Renova todo mês."}[q.per]}</div>
+                            <div style={{display:"grid",gridTemplateColumns:q.per==="total"?"minmax(0,1fr) minmax(0,1fr) minmax(0,1.2fr)":"minmax(0,1fr) minmax(0,1.2fr)",gap:8}}>
+                              <div><label style={FL}>{q.per==="total"?"Alvo *":`Alvo ${{dia:"por dia",semana:"por semana",mes:"por mês"}[q.per]} *`}</label><input inputMode="numeric" style={INP(erroGen.alvoQtd)} placeholder="100" value={q.alvo} onChange={e=>upQi("alvo",e.target.value.replace(/\D/g,"").slice(0,7))}/></div>
+                              {q.per==="total"&&<div><label style={FL}>Atual</label><input inputMode="numeric" style={INP(false)} placeholder="0" value={q.atual} onChange={e=>upQi("atual",e.target.value.replace(/\D/g,"").slice(0,7))}/></div>}
+                              <div><label style={FL}>Unidade</label><input style={INP(false)} placeholder={q.per==="total"?"assinantes":"repetições"} value={q.unidade} onChange={e=>upQi("unidade",e.target.value.slice(0,20))}/></div>
+                            </div>
+                            <ErrTxt msg={erroGen.alvoQtd}/>
+                            <button onClick={addQi} style={{width:"100%",marginTop:10,border:"2px solid #2E6E5E",background:"#EAF3EF",color:"#235448",borderRadius:10,padding:"10px",fontSize:14,fontWeight:800,cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>+ Adicionar atividade</button>
+                          </div>
+                        </div>);
+                      })()}
                       {md.includes("etapas")&&<div style={{fontSize:12.5,fontWeight:800,color:"#173C33",marginBottom:8}}>✅ Etapas</div>}
                       {md.includes("etapas")&&(
                         <div style={{marginBottom:14}}>
