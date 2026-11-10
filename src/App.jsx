@@ -321,7 +321,7 @@ function FormBody({form,setForm,erro,setErro,permiteRecorrencia,metasVinc=[]}) {
             {metasVinc.map(m=><option key={m.id} value={m.id}>{(BENS[m.unidade]||BENS.outro).icone} {m.nome}</option>)}
           </select>
           {form.meta_id&&<div style={{background:"#EAF3EF",border:"1px solid #BFDCD1",borderRadius:10,padding:"10px 12px",marginTop:8,fontSize:11.5,color:"#235448",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
-            🏠 Esta despesa conta como parcela paga da meta{form.data>hoje()?" assim que for movida para executado":""}. Continua somando normalmente nas despesas.
+            🏠 Esta despesa conta como parcela paga da meta{form.data>hoje()?" assim que for executada":""}. Continua somando normalmente nas despesas.
           </div>}
         </div>
       )}
@@ -346,7 +346,7 @@ function FormBody({form,setForm,erro,setErro,permiteRecorrencia,metasVinc=[]}) {
         <Err k="data"/>
         {form.data>hoje()&&(
           <div style={{background:"#FBECEA",border:"1px solid #EBBDB6",borderRadius:10,padding:"10px 12px",marginTop:8,fontSize:11.5,color:"#8A3A30",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
-            📅 Data futura — essa despesa fica "agendada" e só entra no total quando você mover para executado (a data chegar não executa sozinha).
+            📅 Data futura — essa despesa fica "agendada" e só entra no total quando você usar Executar (a data chegar não executa sozinha).
           </div>
         )}
         {form.data<=hoje()&&(
@@ -458,23 +458,6 @@ async function fetchRange(ini, fim) {
 }
 const somaV = a => a.reduce((s,x)=>s+x.valor,0);
 const agCat = list => { const m={}; list.forEach(l=>{m[l.categoria]=(m[l.categoria]||0)+l.valor;}); return Object.entries(m).map(([cat,val])=>({cat,val,cor:CAT_CORES[cat]||"#999"})).sort((a,b)=>b.val-a.val); };
-function Donut({ segs, size=124 }) {
-  const r=28, cx=45, cy=45, circ=2*Math.PI*r;
-  const total=segs.reduce((s,x)=>s+x.val,0);
-  let off=0;
-  return (
-    <svg width={size} height={size} viewBox="0 0 90 90">
-      <circle cx={cx} cy={cy} r={r} fill="none" stroke="#E9E5D8" strokeWidth="10"/>
-      {segs.map((sg,i)=>{
-        const len=total>0?(sg.val/total)*circ:0;
-        const el=<circle key={i} cx={cx} cy={cy} r={r} fill="none" stroke={sg.cor} strokeWidth="10"
-          strokeDasharray={`${Math.max(len-1.5,0)} ${circ}`} strokeDashoffset={-off}
-          style={{transform:"rotate(-90deg)",transformOrigin:"50% 50%"}}/>;
-        off+=len; return el;
-      })}
-    </svg>
-  );
-}
 function Relatorio({ mesKey, goPeriodo, aplicadoTodos }) {
   const [tipo,setTipo]   = useState("mes");
   const [dados,setDados] = useState(null);
@@ -600,30 +583,37 @@ function Relatorio({ mesKey, goPeriodo, aplicadoTodos }) {
               {total===0
                 ?<div style={{textAlign:"center",color:"#A39C8A",fontSize:13,fontWeight:700}}>Sem despesas no período.</div>
                 :<>
-                  <div style={{display:"flex",justifyContent:"center",marginBottom:14}}>
-                    <div style={{position:"relative"}}>
-                      <Donut segs={cats}/>
-                      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",pointerEvents:"none"}}>
-                        <div style={{fontSize:8,color:"#A39C8A",fontWeight:700,textTransform:"uppercase"}}>total</div>
-                        <div style={{fontSize:fmt(total).length>12?8:9,fontWeight:800,color:"#173C33",fontFamily:"'Fraunces',serif",textAlign:"center",lineHeight:1.2,maxWidth:62}}>{fmt(total)}</div>
+                  <div style={{marginBottom:14}}>
+                    <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",gap:10,marginBottom:12}}>
+                      <div>
+                        <div style={{fontSize:10,color:"#A39C8A",fontWeight:700,letterSpacing:"0.08em",textTransform:"uppercase"}}>Total do período</div>
+                        <div style={{fontSize:26,fontWeight:800,color:"#173C33",lineHeight:1.1}}>{fmt(total)}</div>
                       </div>
+                      <div style={{textAlign:"right",fontSize:11,color:"#A39C8A",fontWeight:700,lineHeight:1.5}}>
+                        <div>{cats.length} categoria{cats.length===1?"":"s"}</div>
+                        {cats[0]&&<div>Maior: <span style={{color:"#173C33"}}>{cats[0].cat} · {pc(cats[0].val,total)}%</span></div>}
+                        {cats.length>=3&&<div>Top 3 = <span style={{color:"#173C33"}}>{pc(cats[0].val+cats[1].val+cats[2].val,total)}%</span></div>}
+                      </div>
+                    </div>
+                    <div style={{display:"flex",height:14,borderRadius:7,overflow:"hidden",gap:2,background:"#F0EEE6"}}>
+                      {cats.map(c=><div key={c.cat} title={`${c.cat}: ${fmt(c.val)}`} style={{flex:c.val,background:c.cor,minWidth:2}}/>)}
                     </div>
                   </div>
                   {linhasCat.map(({cat,val,cor},i)=>{
                     const v=variacao(cat,val);
                     return (
-                      <div key={cat} style={{padding:"10px 0",borderTop:i?"1px solid #F0EEE6":"none",opacity:val===0?0.7:1}}>
+                      <div key={cat} style={{padding:"12px 0",borderTop:i?"1px solid #F0EEE6":"none",opacity:val===0?0.7:1}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",gap:8,marginBottom:5}}>
                           <span style={{display:"flex",alignItems:"center",gap:7,minWidth:0}}>
-                            <span style={{width:8,height:8,borderRadius:2,background:cor,flexShrink:0}}/>
-                            <span style={{fontSize:13,fontWeight:700,color:"#173C33",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cat}</span>
+                            <span style={{width:22,height:22,borderRadius:7,background:cor,color:"#fff",fontSize:11,fontWeight:800,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{val===0?"–":i+1}</span>
+                            <span style={{fontSize:14,fontWeight:700,color:"#173C33",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cat}</span>
                           </span>
                           <span style={{display:"flex",alignItems:"baseline",gap:8,flexShrink:0}}>
-                            <span style={{fontSize:13,fontWeight:800,color:"#173C33"}}>{fmt(val)}</span>
+                            <span style={{fontSize:15,fontWeight:800,color:"#173C33"}}>{fmt(val)}</span>
                             <span style={{fontSize:11,fontWeight:800,color:cor,minWidth:44,textAlign:"right"}}>{pc(val,total)}%</span>
                           </span>
                         </div>
-                        <Bar percent={total>0?(val/total)*100:0} color={cor}/>
+                        <div style={{background:"#F0EEE6",borderRadius:6,height:10,width:"100%",overflow:"hidden"}}><div style={{width:`${total>0?(val/total)*100:0}%`,background:cor,height:"100%",borderRadius:6}}/></div>
                         {v&&<div style={{fontSize:10,fontWeight:700,color:v.cor,marginTop:5}}>{v.txt}</div>}
                       </div>
                     );
@@ -713,7 +703,7 @@ const BENS = { veiculo:{nome:"Veículo",icone:"🚗"}, imovel:{nome:"Imóvel",ic
 // Conta a pagar = programada e ainda não executada
 const pendConta = (l, hj) => despesaConta(l) && (l.programado===true || (l.programado==null && l.data>hj));
 const MIGRADOS = new Set();
-// Despesa fica "agendada" até ser movida para executado MANUALMENTE: a data chegar não executa sozinha.
+// Despesa fica "agendada" até ser executada MANUALMENTE: a data chegar não executa sozinha.
 const agendada = (l, hj) => l.data>hj || l.programado===true;
 // Medidores da meta objetiva — dá para usar mais de um na mesma meta
 const MEDIDORES = {
@@ -874,12 +864,12 @@ function gerarAlertas(g, metas) {
   const atras = g.l.filter(l=>pend(l)&&l.data<hj).sort((a,b)=>a.data.localeCompare(b.data));
   if (atras.length) out.push({ nivel:2, key:"atr:"+atras.map(l=>l.id).join(","), ids:atras.map(l=>l.id), titulo:`${atras.length} ${plural(atras.length,"conta atrasada","contas atrasadas")}`,
     motivo: lista(atras,4,l=>`${l.descricao} (${fmtDate(l.data)})`), impacto:`${fmt(soma(atras))} vencido e ainda não executado`,
-    acao:"Pague e use “Mover para executado” no Histórico. Se já pagou, mova para executado para sair daqui." });
+    acao:"Pague e use “Executar” no Histórico. Se já pagou, use Executar para sair daqui." });
   // 1) Vencem hoje
   const hojeL = g.l.filter(l=>pend(l)&&l.data===hj);
   if (hojeL.length) out.push({ nivel:2, key:"hoje:"+hojeL.map(l=>l.id).join(","), ids:hojeL.map(l=>l.id), hoje:true, qtd:hojeL.length, titulo:`${hojeL.length} ${plural(hojeL.length,"conta","contas")} para pagar hoje`,
     motivo: lista(hojeL,4,l=>`${l.descricao} (${fmt(l.valor)})`), total: soma(hojeL), impacto:`${fmt(soma(hojeL))} vencendo hoje`,
-    acao:"Pague hoje e mova para executado — o alerta some sozinho." });
+    acao:"Pague hoje e use Executar — o alerta some sozinho." });
   // 2) Próximos 3 dias
   const vence = g.l.filter(l=>pend(l)&&l.data>hj&&l.data<=addDias(hj,3)).sort((a,b)=>a.data.localeCompare(b.data));
   if (vence.length) out.push({ nivel:1, key:"venc:"+vence.map(l=>l.id).join(","), ids:vence.map(l=>l.id), titulo:`${vence.length} ${plural(vence.length,"conta vencendo","contas vencendo")} nos próximos 3 dias`,
@@ -1704,7 +1694,7 @@ export default function App() {
           {agendada(t,hoje())&&!t.excluido&&<div style={{fontSize:9.5,fontWeight:700,color:"#8A3A30",marginTop:2,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>{t.data>hoje()?"Agendado":"A pagar · venceu"} · {fmtDate(t.data)}</div>}
         </div>
         {!limpo&&!t.excluido&&!isFechado&&agendada(t,hoje())&&(
-          <button onClick={()=>provisionar(t)} title="Mover para executado" style={{background:"#EAF3EF",border:"1px solid #BFDCD1",color:"#235448",borderRadius:8,fontSize:10.5,fontWeight:700,padding:"5px 8px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>Executar</button>
+          <button onClick={()=>provisionar(t)} title="Executar" style={{background:"#EAF3EF",border:"1px solid #BFDCD1",color:"#235448",borderRadius:8,fontSize:10.5,fontWeight:700,padding:"5px 8px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>Executar</button>
         )}
         {!limpo&&!t.excluido&&!isFechado&&(
           <button className="icon-btn" onClick={()=>openEdit(t)}>
@@ -2415,7 +2405,7 @@ export default function App() {
                 {ic(<><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></>)}<span>Editar</span>
               </button>
               {prog&&<button className="ctx-item" onClick={()=>{fecha();provisionar(it);}}>
-                {ic(<><polyline points="20 6 9 17 4 12"/></>)}<span>Mover para executado</span>
+                {ic(<><polyline points="20 6 9 17 4 12"/></>)}<span>Executar</span>
               </button>}
               <div style={{height:1,background:"#FFFFFF1A",margin:"4px 2px"}}/>
               <button className="ctx-item ctx-red" onClick={()=>{fecha();ctx.kind==="lanc"?setDelItem(it):setDelReceita(it);}}>
@@ -2523,7 +2513,7 @@ export default function App() {
             <div style={{fontSize:15,fontWeight:800,color:"#173C33",fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{acaoItem.descricao}</div>
             <div style={{fontSize:12,color:"#A39C8A",marginBottom:16,fontFamily:"'Inter',sans-serif"}}>{fmt(acaoItem.valor)} · {fmtDate(acaoItem.data)}</div>
             <button className="btn-primary" onClick={()=>{const t=acaoItem;setAcaoItem(null);openEdit(t);}}>Editar</button>
-            {agendada(acaoItem,hoje())&&<button className="btn-success" onClick={()=>{const t=acaoItem;setAcaoItem(null);provisionar(t);}}>Mover para executado</button>}
+            {agendada(acaoItem,hoje())&&<button className="btn-success" onClick={()=>{const t=acaoItem;setAcaoItem(null);provisionar(t);}}>Executar</button>}
             <button className="btn-danger" onClick={()=>{const t=acaoItem;setAcaoItem(null);setDelItem(t);}}>Excluir</button>
             <button className="btn-ghost" onClick={()=>setAcaoItem(null)}>Cancelar</button>
           </div>
