@@ -124,7 +124,7 @@ const amanha  = () => { const d=new Date(); d.setDate(d.getDate()+1); return dLo
 const d2brl   = d => { const n=parseInt(d||"0",10); return `${Math.floor(n/100).toLocaleString("pt-BR")},${String(n%100).padStart(2,"0")}`; };
 const d2float = d => parseInt(d||"0",10)/100;
 const float2d = v => String(Math.round(v*100));
-const soma    = arr => arr.filter(t=>!t.excluido && t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data<=hoje()).reduce((s,t)=>s+t.valor,0);
+const soma    = arr => arr.filter(t=>!t.excluido && t.meio!=="Pluxe" && t.categoria!=="Aplicado" && !agendada(t,hoje())).reduce((s,t)=>s+t.valor,0);
 const padN    = n => String(n).padStart(2,"0");
 const addMesesData = (dataStr, n) => {
   const [y,m,d] = dataStr.split("-").map(Number);
@@ -346,8 +346,14 @@ function FormBody({form,setForm,erro,setErro,permiteRecorrencia,metasVinc=[]}) {
         <Err k="data"/>
         {form.data>hoje()&&(
           <div style={{background:"#FBECEA",border:"1px solid #EBBDB6",borderRadius:10,padding:"10px 12px",marginTop:8,fontSize:11.5,color:"#8A3A30",fontWeight:600,fontFamily:"'Inter',sans-serif"}}>
-            📅 Data futura — essa despesa fica "agendada" e só entra no total a partir de {fmtDate(form.data)}.
+            📅 Data futura — essa despesa fica "agendada" e só entra no total quando você mover para executado (a data chegar não executa sozinha).
           </div>
+        )}
+        {form.data<=hoje()&&(
+          <label style={{display:"flex",alignItems:"center",gap:8,marginTop:8,fontSize:12,fontWeight:700,color:"#4A4A4A",fontFamily:"'Inter',sans-serif",cursor:"pointer"}}>
+            <input type="checkbox" checked={!!form.pagar} onChange={e=>setForm(f=>({...f,pagar:e.target.checked}))}/>
+            Ainda não paguei (conta a pagar, executo manualmente)
+          </label>
         )}
       </div>
       <div style={{marginBottom:8}}>
@@ -514,9 +520,9 @@ function Relatorio({ mesKey, goPeriodo, aplicadoTodos }) {
   );
   if (!dados) return <>{header}<div style={{...card,padding:24,textAlign:"center",color:"#A39C8A",fontSize:14,fontWeight:700}}>Carregando…</div></>;
 
-  const contFn = l => l.meio!=="Pluxe" && l.categoria!=="Aplicado" && l.data<=hj;
+  const contFn = l => l.meio!=="Pluxe" && l.categoria!=="Aplicado" && !agendada(l,hj);
   const lc = dados.cur.l.filter(contFn), lp = dados.prev.l.filter(contFn);
-  const agend = dados.cur.l.filter(l=>l.meio!=="Pluxe"&&l.categoria!=="Aplicado"&&l.data>hj);
+  const agend = dados.cur.l.filter(l=>l.meio!=="Pluxe"&&l.categoria!=="Aplicado"&&agendada(l,hj));
   const total=somaV(lc), totAnt=somaV(lp), temAnt=lp.length>0;
   const diff = totAnt>0 ? ((total-totAnt)/totAnt)*100 : null;
   const receita=somaV(dados.cur.r), saldo=receita-total;
@@ -706,6 +712,9 @@ const TIPOS_META = {
 const BENS = { veiculo:{nome:"Veículo",icone:"🚗"}, imovel:{nome:"Imóvel",icone:"🏠"}, outro:{nome:"Outro bem",icone:"🏷️"} };
 // Conta a pagar = programada e ainda não executada
 const pendConta = (l, hj) => despesaConta(l) && (l.programado===true || (l.programado==null && l.data>hj));
+const MIGRADOS = new Set();
+// Despesa fica "agendada" até ser movida para executado MANUALMENTE: a data chegar não executa sozinha.
+const agendada = (l, hj) => l.data>hj || l.programado===true;
 // Medidores da meta objetiva — dá para usar mais de um na mesma meta
 const MEDIDORES = {
   quantidade: { nome:"Quantidade", icone:"🔢", desc:"Contar até um número (ex.: 100 assinantes)." },
@@ -804,7 +813,7 @@ function progMeta(mt, g) {
   } else if (tipo==="patrimonio") {
     const np = Number(mt.parcelas)||0, ent = Number(mt.valor_inicial)||0, antes = Math.min(np, Math.max(0, Number(mt.parc_pagas)||0));
     const parcEst = np>0 ? Math.max(0, alvo-ent)/np : 0;
-    const pg = g.l.filter(l=>l.meta_id===mt.id && despesaConta(l) && !pendConta(l,hj) && l.data<=hj);
+    const pg = g.l.filter(l=>l.meta_id===mt.id && despesaConta(l) && !agendada(l,hj));
     atual = ent + antes*parcEst + pg.reduce((s,l)=>s+l.valor,0);
     const pagasTot = Math.min(np||Infinity, antes + pg.length);
     let esperado = 0;
@@ -812,7 +821,7 @@ function progMeta(mt, g) {
     patr = { np, pagas:pagasTot, restam:Math.max(0,np-pagasTot), esperado, ent, antes };
     detalhe = `${pagasTot}${np?` de ${np}`:""} parcela${pagasTot===1?"":"s"} paga${pagasTot===1?"":"s"}${ent>0?` · entrada ${fmt(ent)}`:""}`;
   } else if (tipo==="limite") {
-    atual = g.l.filter(l=>despesaConta(l)&&l.mes===mh&&l.data<=hj&&(!mt.categoria||l.categoria===mt.categoria)).reduce((s,l)=>s+l.valor,0);
+    atual = g.l.filter(l=>despesaConta(l)&&l.mes===mh&&!agendada(l,hj)&&(!mt.categoria||l.categoria===mt.categoria)).reduce((s,l)=>s+l.valor,0);
     detalhe = mt.categoria ? `gasto em ${mt.categoria} neste mês` : "despesa total deste mês";
   } else if (tipo==="objetiva") {
     meds = progMedidores(mt);
@@ -1229,6 +1238,8 @@ export default function App() {
       tbGet("metas", "order=criado_em.asc"),
       fetchAplicadoAll(),
     ]);
+    // Contas antigas (sem a marca "programado") com data futura: grava a marca para que não virem executadas sozinhas no dia.
+    if (!g.falhou) (g.l||[]).filter(l=>l.programado===null && l.data>hoje() && !l.excluido && !MIGRADOS.has(l.id)).forEach(l=>{ MIGRADOS.add(l.id); l.programado=true; sbPatch(l.id,{programado:true}); });
     if (!g.falhou && ap) setGlob({ l:g.l, r:g.r, ap });
     if (mt) setMetas(mt.filter(x=>!x.excluido));
   }, []);
@@ -1268,9 +1279,9 @@ export default function App() {
   }, []);
 
   const ativos     = useMemo(()=>items.filter(t=>!t.excluido),[items]);
-  const contaveis  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data<=hoje()),[ativos]);
+  const contaveis  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && !agendada(t,hoje())),[ativos]);
   const total      = useMemo(()=>contaveis.reduce((s,t)=>s+t.valor,0),[contaveis]);
-  const agendados  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && t.data>hoje()),[ativos]);
+  const agendados  = useMemo(()=>ativos.filter(t=>t.meio!=="Pluxe" && t.categoria!=="Aplicado" && agendada(t,hoje())),[ativos]);
   const totalAgendado = useMemo(()=>agendados.reduce((s,t)=>s+t.valor,0),[agendados]);
   const totalReceita = useMemo(()=>receitas.reduce((s,r)=>s+r.valor,0),[receitas]);
   const saldo        = totalReceita - total;
@@ -1430,7 +1441,7 @@ export default function App() {
       id: uid(), cliente_id: CID, mes: form.data.slice(0,7), centro: "empresa",
       categoria: form.categoria, descricao: form.descricao.trim(), valor,
       meio: form.meio, data: form.data, obs: form.obs, excluido: false,
-      recorrente: !!form.recorrente, motivo_exclusao: "", programado: form.data>hoje(), meta_id: form.meta_id||null,
+      recorrente: !!form.recorrente, motivo_exclusao: "", programado: form.data>hoje() || !!form.pagar, meta_id: form.meta_id||null,
     };
     const res = await sbPost(item);
     setShowForm(false);
@@ -1462,7 +1473,7 @@ export default function App() {
     if(res){ load(); showToast("✓ Receita registrada"); }
   };
   const openEdit=item=>{
-    setForm({descricao:item.descricao,valorDigits:float2d(item.valor),categoria:item.categoria,meio:item.meio,data:item.data,obs:item.obs||"",meta_id:item.meta_id||""});
+    setForm({descricao:item.descricao,valorDigits:float2d(item.valor),categoria:item.categoria,meio:item.meio,data:item.data,obs:item.obs||"",meta_id:item.meta_id||"",pagar:item.programado===true&&item.data<=hoje()});
     setErro({});setEditItem(item);
   };
   const salvarEdicao=async ()=>{
@@ -1472,7 +1483,7 @@ export default function App() {
       descricao: form.descricao.trim(), valor: d2float(form.valorDigits),
       categoria: form.categoria, meio: form.meio, data: form.data,
       mes: form.data.slice(0,7), obs: form.obs,
-      programado: form.data>hoje() || (editItem.programado===true && form.data===editItem.data), meta_id: form.meta_id||null,
+      programado: form.data>hoje() || !!form.pagar, meta_id: form.meta_id||null,
     });
     setEditItem(null);
     if(ok){ load(); showToast("✓ Lançamento atualizado"); }
@@ -1690,9 +1701,9 @@ export default function App() {
       <div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
         <div style={{textAlign:"right"}}>
           <div style={{fontSize:15,fontWeight:800,color:t.excluido?"#bbb":"#173C33",fontFamily:"'Inter',sans-serif"}}>{fmt(t.valor)}</div>
-          {t.data>hoje()&&!t.excluido&&<div style={{fontSize:9.5,fontWeight:700,color:"#8A3A30",marginTop:2,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>Agendado · {fmtDate(t.data)}</div>}
+          {agendada(t,hoje())&&!t.excluido&&<div style={{fontSize:9.5,fontWeight:700,color:"#8A3A30",marginTop:2,fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap"}}>{t.data>hoje()?"Agendado":"A pagar · venceu"} · {fmtDate(t.data)}</div>}
         </div>
-        {!limpo&&!t.excluido&&!isFechado&&t.data>hoje()&&(
+        {!limpo&&!t.excluido&&!isFechado&&agendada(t,hoje())&&(
           <button onClick={()=>provisionar(t)} title="Mover para executado" style={{background:"#EAF3EF",border:"1px solid #BFDCD1",color:"#235448",borderRadius:8,fontSize:10.5,fontWeight:700,padding:"5px 8px",cursor:"pointer",fontFamily:"'Inter',sans-serif"}}>Executar</button>
         )}
         {!limpo&&!t.excluido&&!isFechado&&(
@@ -2326,7 +2337,7 @@ export default function App() {
             </div>
             {(()=>{
               const termos=normTxt(busca).split(/\s+/).filter(Boolean);
-              const isProg=t=>!t.excluido&&t.data>hoje();
+              const isProg=t=>!t.excluido&&agendada(t,hoje());
               const base=sorted.filter(t=>histTab==="prog"?isProg(t):!isProg(t));
               const nProg=sorted.filter(isProg).length;
               const lista=termos.length?base.filter(t=>{const h=normTxt(t.descricao);return termos.every(x=>h.includes(x));}):base;
@@ -2387,7 +2398,7 @@ export default function App() {
         </div>
       )}
       {ctx&&(()=>{
-        const it=ctx.item, prog=ctx.kind==="lanc"&&it.data>hoje();
+        const it=ctx.item, prog=ctx.kind==="lanc"&&agendada(it,hoje());
         const W=230, Hh=ctx.kind==="lanc"?(prog?170:130):130;
         const left=Math.max(8,Math.min(ctx.x,window.innerWidth-W-8)), top=Math.max(8,Math.min(ctx.y,window.innerHeight-Hh-8));
         const ic=(d)=><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{d}</svg>;
@@ -2512,7 +2523,7 @@ export default function App() {
             <div style={{fontSize:15,fontWeight:800,color:"#173C33",fontFamily:"'Inter',sans-serif",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{acaoItem.descricao}</div>
             <div style={{fontSize:12,color:"#A39C8A",marginBottom:16,fontFamily:"'Inter',sans-serif"}}>{fmt(acaoItem.valor)} · {fmtDate(acaoItem.data)}</div>
             <button className="btn-primary" onClick={()=>{const t=acaoItem;setAcaoItem(null);openEdit(t);}}>Editar</button>
-            {acaoItem.data>hoje()&&<button className="btn-success" onClick={()=>{const t=acaoItem;setAcaoItem(null);provisionar(t);}}>Mover para executado</button>}
+            {agendada(acaoItem,hoje())&&<button className="btn-success" onClick={()=>{const t=acaoItem;setAcaoItem(null);provisionar(t);}}>Mover para executado</button>}
             <button className="btn-danger" onClick={()=>{const t=acaoItem;setAcaoItem(null);setDelItem(t);}}>Excluir</button>
             <button className="btn-ghost" onClick={()=>setAcaoItem(null)}>Cancelar</button>
           </div>
